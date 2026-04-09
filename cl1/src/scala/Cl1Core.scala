@@ -17,7 +17,9 @@ class Cl1Core extends Module {
     val sft_irq   = Input(Bool())
     val tmr_irq   = Input(Bool())
     val core_wfi  = Output(Bool())
-    val master = new AXI4(BUS_WIDTH, BUS_WIDTH, 5)
+    val master    = if(!EXPOSE_CORE_BUS) Some(new AXI4(BUS_WIDTH, BUS_WIDTH, 5)) else None
+    val ibus      = if(EXPOSE_CORE_BUS)  Some(new CoreBus)  else None  // instruction fetch bus
+    val dbus      = if(EXPOSE_CORE_BUS)  Some(new CoreBus)  else None  // data access bus
   })
 
 
@@ -37,10 +39,6 @@ class Cl1Core extends Module {
   val lsu     = Module(new Cl1LSU())
 
   val wbStage = Module(new Cl1WBStage())
-
-  val xbar    = Module(new crossbarCache())
-
-  // val bridge  = Module(new SimpleBus2Axi4())
 
   val dm      = Module(new Cl1DM)
 
@@ -77,7 +75,7 @@ class Cl1Core extends Module {
   val bypass = wbStage.io.forwardDat
 
   //rd comes from WBStage
-  val rs1Hazard = idStage.io.valid && idStage.io.rs1_ren && (rs1 === rd) && wen && wbStage.io.valid 
+  val rs1Hazard = idStage.io.valid && idStage.io.rs1_ren && (rs1 === rd) && wen && wbStage.io.valid
   val rs2Hazard = idStage.io.valid && idStage.io.rs2_ren && (rs2 === rd) && wen && wbStage.io.valid
   //stall when writing to CSR, trap ?
   val csrHazard = idStage.io.valid && readCSR.orR && csrWen && wbStage.io.valid
@@ -85,11 +83,11 @@ class Cl1Core extends Module {
   val dx_rs1dat  = if(WB_PIPESTAGE)  Mux(rs1Hazard, bypass, gpr.io.readDataA) else gpr.io.readDataA
   val dx_rs2dat  = if(WB_PIPESTAGE)  Mux(rs2Hazard, bypass, gpr.io.readDataB) else gpr.io.readDataB
   val dx_stall   = if(WB_PIPESTAGE)  csrHazard || (rs1Hazard || rs2Hazard) & wbStage.io.is_mem_load || excp.io.dxu_halt else false.B
-  
+
   idStage.io.pplOut <> wbStage.io.pplIn
   idStage.io.rs1Value := dx_rs1dat
   idStage.io.rs2Value := dx_rs2dat
-  
+
   idStage.io.csrData  := csr.io.rdValue
   idStage.io.stall    := dx_stall
   idStage.io.flush    := pipe_flush
@@ -158,47 +156,58 @@ class Cl1Core extends Module {
   }
 */
 
-  if(HAS_ICACHE) {
-    val icache = Module(new Cl1ICACHE)
-    aligner.io.bus <> icache.io.in
-    excp.io.icache_idle := icache.io.icache_idle
-    idStage.io.icache_req <> icache.io.dxReq
-    xbar.io.in(0) <> icache.io.out
-  } else {
-    val ibridge = Module(new CoreBus2CacheBus)
-    aligner.io.bus <> ibridge.io.in
+  if(EXPOSE_CORE_BUS) {
+    // Directly expose CoreBus interfaces, bypass cache/xbar/AXI
+    io.ibus.get <> aligner.io.bus
+    io.dbus.get <> lsu.io.out
     excp.io.icache_idle := true.B
-    idStage.io.icache_req.ready := true.B
-    xbar.io.in(0) <> ibridge.io.out
-  }
-
-  if(HAS_DCACHE) {
-    val dcache  = Module(new Cl1DCACHE)
-    lsu.io.out     <> dcache.io.in
-    excp.io.dcache_idle := dcache.io.dcache_idle
-    idStage.io.dcache_req <> dcache.io.dxReq
-    xbar.io.in(1) <> dcache.io.out
-      if(DCACHE_CKG_EN) {
-        val dcache_ck_en = BoringUtils.bore(dcache.dcache_ck_en)
-        val dcache_clk   = ClockGate(clock, dcache_ck_en)
-        dcache.clock := dcache_clk
-      }
-  } else {
-    val dbridge = Module(new CoreBus2CacheBus)
-    BypReg(lsu.io.out.req)     <> dbridge.io.in.req
-    lsu.io.out.rsp     <> dbridge.io.in.rsp
     excp.io.dcache_idle := true.B
+    idStage.io.icache_req.ready := true.B
     idStage.io.dcache_req.ready := true.B
-    xbar.io.in(1) <> dbridge.io.out
+  } else {
+    val xbar    = Module(new crossbarCache())
+
+    if(HAS_ICACHE) {
+      val icache = Module(new Cl1ICACHE)
+      aligner.io.bus <> icache.io.in
+      excp.io.icache_idle := icache.io.icache_idle
+      idStage.io.icache_req <> icache.io.dxReq
+      xbar.io.in(0) <> icache.io.out
+    } else {
+      val ibridge = Module(new CoreBus2CacheBus)
+      aligner.io.bus <> ibridge.io.in
+      excp.io.icache_idle := true.B
+      idStage.io.icache_req.ready := true.B
+      xbar.io.in(0) <> ibridge.io.out
+    }
+
+    if(HAS_DCACHE) {
+      val dcache  = Module(new Cl1DCACHE)
+      lsu.io.out     <> dcache.io.in
+      excp.io.dcache_idle := dcache.io.dcache_idle
+      idStage.io.dcache_req <> dcache.io.dxReq
+      xbar.io.in(1) <> dcache.io.out
+        if(DCACHE_CKG_EN) {
+          val dcache_ck_en = BoringUtils.bore(dcache.dcache_ck_en)
+          val dcache_clk   = ClockGate(clock, dcache_ck_en)
+          dcache.clock := dcache_clk
+        }
+    } else {
+      val dbridge = Module(new CoreBus2CacheBus)
+      BypReg(lsu.io.out.req)     <> dbridge.io.in.req
+      lsu.io.out.rsp     <> dbridge.io.in.rsp
+      excp.io.dcache_idle := true.B
+      idStage.io.dcache_req.ready := true.B
+      xbar.io.in(1) <> dbridge.io.out
+    }
+
+    io.master.get <> xbar.io.out
   }
 
-  
   if(LSU_CKG_EN) {
     val lsu_ck_en = BoringUtils.bore(lsu.lsu_ck_en)
     val lsu_clk   = ClockGate(clock, lsu_ck_en)
     lsu.clock := lsu_clk
   }
-
-    io.master <> xbar.io.out
 
 }

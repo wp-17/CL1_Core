@@ -24,7 +24,9 @@ class Cl1Top extends Module{
     val tmr_irq   = Input(Bool())
     val dbg_req_i = Input(Bool())
     val diff_o    = if(SOC_DIFF) Some(new diff) else None
-    val master = new AXI4(BUS_WIDTH, if (SOC_D64) 64 else BUS_WIDTH, 5)
+    val master    = if(!EXPOSE_CORE_BUS) Some(new AXI4(BUS_WIDTH, if (SOC_D64) 64 else BUS_WIDTH, 5)) else None
+    val ibus      = if(EXPOSE_CORE_BUS)  Some(new CoreBus) else None  // instruction fetch bus
+    val dbus      = if(EXPOSE_CORE_BUS)  Some(new CoreBus) else None  // data access bus
   })
 
   val rvfi      = if(FORMAL_VERIF) Some(FlatIO(new RVFI)) else None
@@ -51,14 +53,19 @@ class Cl1Top extends Module{
   core.io.sft_irq   := io.sft_irq
   core.io.tmr_irq   := io.tmr_irq
 
-  val core_axi = if(SOC_D64) {
-    val AXIWidthC = withReset(rst1) {Module(new AXIWidthConverter)}
-    core.io.master <> AXIWidthC.io.in
-    AXIWidthC.io.out
+  if(EXPOSE_CORE_BUS) {
+    io.ibus.get <> core.io.ibus.get
+    io.dbus.get <> core.io.dbus.get
   } else {
-    core.io.master
+    val core_axi = if(SOC_D64) {
+      val AXIWidthC = withReset(rst1) {Module(new AXIWidthConverter)}
+      core.io.master.get <> AXIWidthC.io.in
+      AXIWidthC.io.out
+    } else {
+      core.io.master.get
+    }
+    io.master.get <> core_axi
   }
-  io.master <> core_axi
 
 
 if(SOC_DIFF) {
