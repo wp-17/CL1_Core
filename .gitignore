@@ -40,3 +40,5 @@ patch/firtool/firtool-*/
 .idea/
 .DS_Store
 Thumbs.db
+.claude/
+.codex
