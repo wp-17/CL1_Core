@@ -2,7 +2,7 @@ package cl1
 
 import chisel3._
 import chisel3.util._
-import cl1.Cl1Config.FORMAL_VERIF
+import cl1.Cl1Config.RISCV_FORMAL_ALTOPS
 
 class mdu_alu_req extends Bundle {
     val req  = Output(Bool())
@@ -284,13 +284,13 @@ val mdu_b2b_rslt    = Mux1H(Seq(
 
 
 // -- RISCV_FORMAL_ALTOPS: alternative arithmetic for formal verification --
-// When FORMAL_VERIF is true, riscv-formal expects M-extension instructions
+// When RISCV_FORMAL_ALTOPS is true, riscv-formal expects M-extension instructions
 // to produce transformed results instead of real mul/div:
 //   MUL/MULH/MULHU (commutative):  (rs1 + rs2) ^ bitmask
 //   MULHSU/DIV/DIVU/REM/REMU:      (rs1 - rs2) ^ bitmask
 // This enables formal verification of MDU control logic (state machine,
 // handshake, bypassing, result selection) without complex arithmetic.
-val altops_rslt = if (FORMAL_VERIF) {
+val altops_rslt = if (RISCV_FORMAL_ALTOPS) {
   val Seq(is_mul, is_mulh, is_mulsu, is_mulhu) =
     Seq(mul_op, mulh_op, mulhsu_op, mulhu_op).map(_ && !mdu_is_div)
   val Seq(is_div, is_rem, is_divu, is_remu) =
@@ -328,7 +328,7 @@ val div_rslt        = Mux1H(Seq(
     div_remd_oen     -> div_rslt_remd
 ))
 
-val out_bits = if (FORMAL_VERIF) {
+val out_bits = if (RISCV_FORMAL_ALTOPS) {
   altops_rslt
 } else {
   Mux1H(Seq(

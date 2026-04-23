@@ -32,6 +32,7 @@ object Cl1Config {
   val Technology   = "SMIC110"
 
   val FORMAL_VERIF = true
+  val RISCV_FORMAL_ALTOPS = false
   val EXPOSE_CORE_BUS = true  // When true, expose CoreBus (fetch + mem) instead of AXI4 at top level
 }
 
