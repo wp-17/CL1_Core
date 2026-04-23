@@ -1,0 +1,44 @@
+# ===== Build / Generated outputs =====
+build/
+out/
+vsrc/
+wave/
+saif/
+
+# Keep placeholder files if needed
+!build/.gitkeep
+!vsrc/.gitkeep
+!wave/.gitkeep
+!saif/.gitkeep
+
+# ===== Scala / Mill / Metals =====
+.metals/
+.scala-build/
+.bloop/
+.bsp/
+.mill-ammonite/
+.mill-version
+
+# ===== Logs / temp =====
+*.log
+*.tmp
+*.swp
+*.swo
+
+# ===== Compressed and dump artifacts =====
+*.fst
+*.fsdb
+*.vcd
+*.vpd
+*.saif
+
+# ===== Tool-downloaded binaries =====
+patch/firtool/firtool-*/
+
+# ===== IDE / OS =====
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+.claude/
+.codex
