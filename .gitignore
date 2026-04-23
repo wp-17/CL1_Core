@@ -42,3 +42,6 @@ patch/firtool/firtool-*/
 Thumbs.db
 .claude/
 .codex
+
+# mill temp files (random 6-char suffix)
+mill.??????
