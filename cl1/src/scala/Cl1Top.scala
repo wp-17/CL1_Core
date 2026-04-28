@@ -185,6 +185,76 @@ if(FORMAL_VERIF && WB_PIPESTAGE) { withReset(rst1) {
   rvfi_port.rvfi_mem_wmask := Mux(mem_rsp_hsked, mem_wmask, 0.U)
   rvfi_port.rvfi_mem_rdata := Mux(mem_rsp_hsked, wb_mem_rdata, 0.U)
   rvfi_port.rvfi_mem_wdata := Mux(mem_rsp_hsked, mem_wdata, 0.U)
+
+  // ---- CSR channels ----
+  val wb_csr_idx   = BoringUtils.bore(core.wbStage.io.csr_idx)
+  val wb_csr_wen   = BoringUtils.bore(core.wbStage.io.csrWen)
+  val wb_csr_wdata = BoringUtils.bore(core.wbStage.io.csrWdat)
+  val wb_csr_rdata = BoringUtils.bore(core.wbStage.pplIn.rdWdat)
+
+  val wb_is_csr_insn = (wb_inst(6,0) === "b1110011".U) && (wb_inst(14,12) =/= 0.U)
+
+  val cur_mstatus  = BoringUtils.bore(core.csr.mstatus)
+  val cur_mie      = BoringUtils.bore(core.csr.mie)
+  val cur_mip      = BoringUtils.bore(core.csr.mip)
+  val cur_mepc     = BoringUtils.bore(core.csr.mepc)
+  val cur_mcause   = BoringUtils.bore(core.csr.mcause)
+  val cur_mtvec    = BoringUtils.bore(core.csr.mtvec)
+  val cur_mscratch = BoringUtils.bore(core.csr.mscratch)
+  val cur_misa     = BoringUtils.bore(core.csr.misa)
+
+  val cmt_epc_en    = BoringUtils.bore(core.excp.cmt_epc_en)
+  val cmt_cause_en  = BoringUtils.bore(core.excp.cmt_cause_en)
+  val cmt_status_en = BoringUtils.bore(core.excp.cmt_status_en)
+  val cmt_mret_en   = BoringUtils.bore(core.excp.cmt_mret_en)
+  val cmt_epc_n     = BoringUtils.bore(core.excp.cmt_epc_n)
+  val cmt_cause_n   = BoringUtils.bore(core.excp.cmt_cause_n)
+
+  val cur_mstatus_mie  = cur_mstatus(3)
+  val cur_mstatus_mpie = cur_mstatus(7)
+
+  val mstatus_trap_wdata = {
+    val cur = cur_mstatus
+    val withClrMie  = Cat(cur(31, 4), 0.U(1.W), cur(2, 0))                                   // MIE=0
+    val withMpieMie = Cat(withClrMie(31, 8), cur_mstatus_mie, withClrMie(6, 0))              // MPIE<-MIE
+    withMpieMie
+  }
+  val mstatus_mret_wdata = {
+    val cur = cur_mstatus
+    val withSetMie  = Cat(cur(31, 4), cur_mstatus_mpie, cur(2, 0))                           // MIE<-MPIE
+    val withSetMpie = Cat(withSetMie(31, 8), 1.U(1.W), withSetMie(6, 0))                     // MPIE=1
+    withSetMpie
+  }
+  val mstatus_implicit_wdata = Mux(cmt_status_en, mstatus_trap_wdata, mstatus_mret_wdata)
+
+  def driveCsr(chan: RVFICSR, addr: UInt, cur: UInt,
+               implicitWrite: Bool = false.B,
+               implicitWdata: UInt = 0.U): Unit = {
+    val selCsrInsn = wb_is_csr_insn && (wb_csr_idx === addr) && rvfi_valid
+    val selW       = wb_csr_wen    && (wb_csr_idx === addr) && rvfi_valid
+    val implW      = implicitWrite && rvfi_valid
+    val anyW       = selW || implW
+    chan.rmask := Fill(32, selCsrInsn)
+    chan.wmask := Fill(32, anyW)
+    chan.rdata := cur
+    chan.wdata := Mux(selW, wb_csr_wdata, Mux(implW, implicitWdata, cur))
+  }
+
+  driveCsr(rvfi_port.rvfi_csr_mstatus,  CSRs.mstatus,  cur_mstatus,
+           cmt_status_en || cmt_mret_en, mstatus_implicit_wdata)
+  driveCsr(rvfi_port.rvfi_csr_mie,      CSRs.mie,      cur_mie)
+  driveCsr(rvfi_port.rvfi_csr_mip,      CSRs.mip,      cur_mip)
+  driveCsr(rvfi_port.rvfi_csr_mepc,     CSRs.mepc,     cur_mepc,
+           cmt_epc_en, Cat(cmt_epc_n(31, 1), 0.U(1.W)))
+  driveCsr(rvfi_port.rvfi_csr_mcause,   CSRs.mcause,   cur_mcause,
+           cmt_cause_en, cmt_cause_n)
+  driveCsr(rvfi_port.rvfi_csr_mtvec,    CSRs.mtvec,    cur_mtvec)
+  driveCsr(rvfi_port.rvfi_csr_mscratch, CSRs.mscratch, cur_mscratch)
+  
+  rvfi_port.rvfi_csr_misa.rmask := Fill(32, true.B)
+  rvfi_port.rvfi_csr_misa.wmask := 0.U
+  rvfi_port.rvfi_csr_misa.rdata := cur_misa
+  rvfi_port.rvfi_csr_misa.wdata := cur_misa
 }}
 
 }
