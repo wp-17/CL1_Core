@@ -2,7 +2,7 @@ package cl1
 
 import chisel3._
 import chisel3.util._
-import cl1.Cl1Config.FORMAL_VERIF
+import cl1.Cl1Config.RISCV_FORMAL_ALTOPS
 
 class mdu_alu_req extends Bundle {
     val req  = Output(Bool())
@@ -284,24 +284,28 @@ val mdu_b2b_rslt    = Mux1H(Seq(
 
 
 // -- RISCV_FORMAL_ALTOPS: alternative arithmetic for formal verification --
-// When FORMAL_VERIF is true, riscv-formal expects M-extension instructions
+// When RISCV_FORMAL_ALTOPS is true, riscv-formal expects M-extension instructions
 // to produce transformed results instead of real mul/div:
 //   MUL/MULH/MULHU (commutative):  (rs1 + rs2) ^ bitmask
 //   MULHSU/DIV/DIVU/REM/REMU:      (rs1 - rs2) ^ bitmask
 // This enables formal verification of MDU control logic (state machine,
 // handshake, bypassing, result selection) without complex arithmetic.
-val altops_rslt = if (FORMAL_VERIF) {
+val altops_rslt = if (RISCV_FORMAL_ALTOPS) {
+  val Seq(is_mul, is_mulh, is_mulsu, is_mulhu) =
+    Seq(mul_op, mulh_op, mulhsu_op, mulhu_op).map(_ && !mdu_is_div)
+  val Seq(is_div, is_rem, is_divu, is_remu) =
+    Seq(div_op, rem_op, divu_op, remu_op).map(_ && mdu_is_div)
   val altops_bitmask = Mux1H(Seq(
-      mul_op    -> "h5876063e".U,  // MUL
-      mulh_op   -> "hf6583fb7".U,  // MULH
-      mulhsu_op -> "hecfbe137".U,  // MULHSU
-      mulhu_op  -> "h949ce5e8".U,  // MULHU
-      div_op    -> "h7f8529ec".U,  // DIV
-      divu_op   -> "h10e8fd70".U,  // DIVU
-      rem_op    -> "h8da68fa5".U,  // REM
-      remu_op   -> "h3138d0e1".U   // REMU
+      is_mul   -> "h5876063e".U,  // MUL
+      is_mulh  -> "hf6583fb7".U,  // MULH
+      is_mulsu -> "hecfbe137".U,  // MULHSU
+      is_mulhu -> "h949ce5e8".U,  // MULHU
+      is_div   -> "h7f8529ec".U,  // DIV
+      is_divu  -> "h10e8fd70".U,  // DIVU
+      is_rem   -> "h8da68fa5".U,  // REM
+      is_remu  -> "h3138d0e1".U   // REMU
   ))
-  val altops_is_sub = ~(mul_op | mulh_op | mulhu_op)
+  val altops_is_sub = mdu_is_div | ~mdu_is_div & is_mulsu
   val altops_base   = Mux(altops_is_sub, mdu_rs1 - mdu_rs2, mdu_rs1 + mdu_rs2)
   altops_base ^ altops_bitmask
 } else {
@@ -324,12 +328,17 @@ val div_rslt        = Mux1H(Seq(
     div_remd_oen     -> div_rslt_remd
 ))
 
-io.out.bits := Mux1H(Seq(
+val out_bits = if (RISCV_FORMAL_ALTOPS) {
+  altops_rslt
+} else {
+  Mux1H(Seq(
     special_case    -> special_case_rslt,
     mdu_b2b_oen     -> mdu_b2b_rslt,
-    mul_rslt_oen    -> { if (FORMAL_VERIF) altops_rslt else mul_rslt },
-    div_rslt_oen    -> { if (FORMAL_VERIF) altops_rslt else div_rslt }
-))
+    mul_rslt_oen    -> mul_rslt,
+    div_rslt_oen    -> div_rslt
+  ))
+}
+io.out.bits := out_bits
 
 
 val mdu_oen =   special_case ||

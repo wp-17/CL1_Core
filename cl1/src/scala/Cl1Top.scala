@@ -272,7 +272,11 @@ if(FORMAL_VERIF && WB_PIPESTAGE) { withReset(rst1) {
            cmt_cause_en, cmt_cause_n)
   driveCsr(rvfi_port.rvfi_csr_mtvec,    CSRs.mtvec,    cur_mtvec)
   driveCsr(rvfi_port.rvfi_csr_mscratch, CSRs.mscratch, cur_mscratch)
-  driveCsr(rvfi_port.rvfi_csr_misa,     CSRs.misa,     cur_misa)
+  
+  rvfi_port.rvfi_csr_misa.rmask := Fill(32, true.B)
+  rvfi_port.rvfi_csr_misa.wmask := 0.U
+  rvfi_port.rvfi_csr_misa.rdata := cur_misa
+  rvfi_port.rvfi_csr_misa.wdata := cur_misa
 }}
 
 }

@@ -257,7 +257,7 @@ class Cl1CSR() extends Module {
   val mcause_wdata = Mux(cmt_cause_en, cmt_cause_n, csr_wdat)
   val mcause       = RegEnable(mcause_wdata, 0.U(32.W), wen_mcause)
 
-  val misa      = WireInit("h40000104".U(32.W))
+  val misa      = WireInit("h40001104".U(32.W))
   
 
   val allCSRs  = Seq(
