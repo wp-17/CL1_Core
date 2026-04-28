@@ -141,6 +141,8 @@ class Cl1WBStage extends Module {
   io.toExcp.wb_valid  := wb_valid
   io.toExcp.wb_pc     := wb_pc
   io.toExcp.memNoOutStanding := Mux(is_mem, io.mem.fire, true.B)
+  io.toExcp.excp_valid := io.pplIn.bits.isTrap && wb_valid
+  io.toExcp.excp_code  := io.pplIn.bits.trapCode
 
 
 // difftest

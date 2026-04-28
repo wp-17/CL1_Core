@@ -29,6 +29,8 @@ class wb2Excp extends Bundle {
     val wb_valid      = Input(Bool())
     val wb_pc         = Input(UInt(32.W))
     val memNoOutStanding = Input(Bool())
+    val excp_valid    = Input(Bool())
+    val excp_code     = Input(UInt(8.W))
 }
 
 class excp2Csr extends Bundle {
@@ -97,6 +99,8 @@ class Cl1EXCP() extends Module with TrapCode {
     val wb_valid        = io.wb2Excp.wb_valid
     val wb_pc           = io.wb2Excp.wb_pc
     val no_outstanding_mem_access = io.wb2Excp.memNoOutStanding
+    val excp_valid      = io.wb2Excp.excp_valid
+    val excp_code_raw   = io.wb2Excp.excp_code
 
     val debug_irq_mask  = io.dbg2excp.debug_irq_mask
     val debug_mode      = io.dbg2excp.debug_mode
@@ -113,8 +117,9 @@ class Cl1EXCP() extends Module with TrapCode {
                         (ext_irq & meie) -> M_EXTER_IRQ
     ))
 
-    val excp_take_en    = cmt_ecall | ebrk_excp_en
+    val excp_take_en    = cmt_ecall | ebrk_excp_en | excp_valid
     val excp_cause       = MuxCase(0.U, Seq(
+                            excp_valid   -> Cat(0.U(24.W), excp_code_raw),
                             ebrk_excp_en -> BREAKPOINT_EXPT,
                             cmt_ecall    -> M_ECALL_EXPT
                         ))

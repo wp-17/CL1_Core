@@ -51,7 +51,7 @@ class DX2IFUSignal extends Bundle {
 }
 
 
-class Cl1IDEXStage extends Module {
+class Cl1IDEXStage extends Module with TrapCode {
   val io = IO(new Bundle {
     val pplIn  = Flipped(Decoupled(new IF2IDEXSignal()))
     val pplOut = Decoupled(new IDEX2WBSignal())
@@ -273,13 +273,18 @@ class Cl1IDEXStage extends Module {
   io.dcache_req.bits.invalid := false.B
   io.dcache_req.bits.clean   := dx_fencei
 
-  io.mem.valid := dx_valid && !dx_exec_done && !dx_flush && is_mem && !dx_stall
-  io.mem.bits.addr := alu.io.misc_req.res
+  val mem_addr = alu.io.misc_req.res
+  val mem_is_half = ctrl.memType(2, 1) === "b10".U
+  val mem_is_word = ctrl.memType(2, 1) === "b11".U
+  val mem_misaligned = is_mem && ((mem_is_half && mem_addr(0) =/= 0.U) || (mem_is_word && mem_addr(1, 0) =/= 0.U))
+
+  io.mem.valid := dx_valid && !dx_exec_done && !dx_flush && (is_mem && !mem_misaligned) && !dx_stall
+  io.mem.bits.addr := mem_addr
   io.mem.bits.memType := ctrl.memType
   io.mem.bits.wdata := io.rs2Value
 
   val fencei_exec    = dx_fencei
-  val multicycl_exec = is_mem | op_is_mdu
+  val multicycl_exec = (is_mem && !mem_misaligned) | op_is_mdu
   val singlcycl_exec = ~multicycl_exec & ~fencei_exec
 
   val ready_go = Mux1H(Seq(
@@ -368,12 +373,12 @@ class Cl1IDEXStage extends Module {
   pplInfo.pc := io.pplIn.bits.pc
   pplInfo.inst   := inst
   pplInfo.wbType := ctrl.wbType
-  pplInfo.wen := rd_wen
+  pplInfo.wen := rd_wen && !mem_misaligned
   pplInfo.memType := ctrl.memType
   pplInfo.isCInst := io.pplIn.bits.isCInst
   pplInfo.cInst := io.pplIn.bits.cInst
-  pplInfo.isTrap := false.B
-  pplInfo.trapCode := 0.U
+  pplInfo.isTrap := mem_misaligned
+  pplInfo.trapCode := Mux(mem_misaligned, Mux(is_store, STORE_MISALIGNED_EXPT(7,0), LOAD_MISALIGNED_EXPT(7,0)), 0.U(8.W))
   pplInfo.dx_ready := ready_go
 
   io.pplOut.valid := wb_valid_n
