@@ -180,7 +180,7 @@ if(FORMAL_VERIF && WB_PIPESTAGE) { withReset(rst1) {
   rvfi_port.rvfi_pc_rdata  := wb_pc
   rvfi_port.rvfi_pc_wdata  := Mux(dx_valid, dx_pc,f2_pc)
 
-  rvfi_port.rvfi_mem_addr  := Mux(mem_rsp_hsked, mem_addr, 0.U)
+  rvfi_port.rvfi_mem_addr  := Mux(mem_rsp_hsked, mem_addr, 0.U) & "hffff_fffc".U
   rvfi_port.rvfi_mem_rmask := Mux(mem_rsp_hsked, mem_rmask, 0.U)
   rvfi_port.rvfi_mem_wmask := Mux(mem_rsp_hsked, mem_wmask, 0.U)
   rvfi_port.rvfi_mem_rdata := Mux(mem_rsp_hsked, wb_mem_rdata, 0.U)
