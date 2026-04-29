@@ -66,7 +66,7 @@ class Cl1WBStage extends Module {
   val wb_ebreak   = pplIn.privInstr(2)
   val wb_mret     = pplIn.privInstr(1)
   val wb_dret     = pplIn.privInstr(0)
-
+  
   // Formal-only: under `-nordff`, every pipeline register field becomes an
   // independent anyinit variable.
   if (FORMAL_VERIF) {
@@ -159,6 +159,8 @@ class Cl1WBStage extends Module {
   io.toExcp.wb_valid  := wb_valid
   io.toExcp.wb_pc     := wb_pc
   io.toExcp.memNoOutStanding := Mux(is_mem, io.mem.fire, true.B)
+  io.toExcp.excp_valid := io.pplIn.bits.isTrap && wb_valid
+  io.toExcp.excp_code  := io.pplIn.bits.trapCode
 
 
 // difftest

@@ -113,6 +113,7 @@ if(FORMAL_VERIF && WB_PIPESTAGE) { withReset(rst1) {
   val wb_cmt    = BoringUtils.bore(core.wbStage.wb_commit)
   val wb_diff_cmt = BoringUtils.bore(core.wbStage.diff_commit)
   val trap      = BoringUtils.bore(core.excp.excp_take_en)
+  val wb_excp_fault = BoringUtils.bore(core.wbStage.io.toExcp.excp_valid)
 
   // Retire through RVFI when the instruction either commits normally, or
   // takes an M-mode trap (ECALL, or EBREAK with dcsr.ebreakm==0).
@@ -169,7 +170,7 @@ if(FORMAL_VERIF && WB_PIPESTAGE) { withReset(rst1) {
   rvfi_port.rvfi_valid     := rvfi_valid
   rvfi_port.rvfi_order     := valid_cnt
   rvfi_port.rvfi_insn      := Mux(wb_is_c, wb_cinst, wb_inst)
-  rvfi_port.rvfi_trap      := false.B   //no illegal instruction or misaligned fetch / load / store now
+  rvfi_port.rvfi_trap      := wb_excp_fault
   rvfi_port.rvfi_halt      := false.B
 
   val intr_taken = BoringUtils.bore(core.excp.irq_take_en)
@@ -202,7 +203,7 @@ if(FORMAL_VERIF && WB_PIPESTAGE) { withReset(rst1) {
   rvfi_port.rvfi_pc_wdata  := Mux(trap || mret_taken, trap_target_pc,
                                   Mux(dx_valid, dx_pc, f2_pc))
 
-  rvfi_port.rvfi_mem_addr  := Mux(mem_rsp_hsked, mem_addr, 0.U)
+  rvfi_port.rvfi_mem_addr  := Mux(mem_rsp_hsked, mem_addr, 0.U) & "hffff_fffc".U
   rvfi_port.rvfi_mem_rmask := Mux(mem_rsp_hsked, mem_rmask, 0.U)
   rvfi_port.rvfi_mem_wmask := Mux(mem_rsp_hsked, mem_wmask, 0.U)
   rvfi_port.rvfi_mem_rdata := Mux(mem_rsp_hsked, wb_mem_rdata, 0.U)
