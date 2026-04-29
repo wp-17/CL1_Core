@@ -66,6 +66,24 @@ class Cl1WBStage extends Module {
   val wb_ebreak   = pplIn.privInstr(2)
   val wb_mret     = pplIn.privInstr(1)
   val wb_dret     = pplIn.privInstr(0)
+  
+  // Formal-only: under `-nordff`, every pipeline register field becomes an
+  // independent anyinit variable.
+  if (FORMAL_VERIF) {
+    val f3_priv   = instr(14, 12) === 0.U
+    val priv_form = (instr(6, 0) === "b1110011".U) &
+                    (instr(11, 7)  === 0.U) &
+                    (instr(19, 15) === 0.U) & f3_priv
+    val f12 = instr(31, 20)
+    val expected = Cat(
+      priv_form & (f12 === "h105".U),  // wfi
+      priv_form & (f12 === "h000".U),  // ecall
+      priv_form & (f12 === "h001".U),  // ebreak
+      priv_form & (f12 === "h302".U),  // mret
+      priv_form & (f12 === "h7b2".U)   // dret
+    )
+    chisel3.assume(pplIn.privInstr === expected)
+  }
 
   val isValidEcall  = wb_valid && wb_ecall 
   val isValidEret   = wb_valid && wb_mret

@@ -111,7 +111,13 @@ if(FORMAL_VERIF && WB_PIPESTAGE) { withReset(rst1) {
   val wb_flush  = BoringUtils.bore(core.wbStage.io.flush)
   val wb_ecall  = BoringUtils.bore(core.wbStage.isValidEcall)
   val wb_cmt    = BoringUtils.bore(core.wbStage.wb_commit)
-  val rvfi_valid = wb_cmt
+  val wb_diff_cmt = BoringUtils.bore(core.wbStage.diff_commit)
+  val trap      = BoringUtils.bore(core.excp.excp_take_en)
+  val wb_excp_fault = BoringUtils.bore(core.wbStage.io.toExcp.excp_valid)
+
+  // Retire through RVFI when the instruction either commits normally, or
+  // takes an M-mode trap (ECALL, or EBREAK with dcsr.ebreakm==0).
+  val rvfi_valid = wb_diff_cmt || trap
   val valid_cnt = Wire(UInt(64.W))
   val wb_pc     = BoringUtils.bore(core.wbStage.wb_pc)
   val wb_is_c   = BoringUtils.bore(core.wbStage.pplIn.isCInst)
@@ -165,7 +171,7 @@ if(FORMAL_VERIF && WB_PIPESTAGE) { withReset(rst1) {
   rvfi_port.rvfi_valid     := rvfi_valid
   rvfi_port.rvfi_order     := valid_cnt
   rvfi_port.rvfi_insn      := Mux(wb_is_c, wb_cinst, wb_inst)
-  rvfi_port.rvfi_trap      := trap
+  rvfi_port.rvfi_trap      := wb_excp_fault
   rvfi_port.rvfi_halt      := false.B
   rvfi_port.rvfi_intr      := false.B
   rvfi_port.rvfi_mode      := "b11".U(2.W)
