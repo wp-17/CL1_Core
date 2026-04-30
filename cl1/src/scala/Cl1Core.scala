@@ -125,6 +125,16 @@ class Cl1Core extends Module {
   wbStage.io.toExcp <> excp.io.wb2Excp
 
   excp.io.dbg2excp  <> dm.io.dbg2excp
+  if (cl1.Cl1Config.FORMAL_VERIF) {
+    // Under formal verification, force debug-mode-related signals into
+    // architectural mode so traps go to mtvec (not the debug exception base).
+    // BMC otherwise picks anyinit values for dm registers and explores
+    // debug-mode trap dispatch, which is outside the RVFI ISA model.
+    excp.io.dbg2excp.debug_mode     := false.B
+    excp.io.dbg2excp.debug_irq_mask := false.B
+    excp.io.dbg2excp.debug_take_req := false.B
+    excp.io.dbg2excp.ebrk_excp_en   := dm.io.dbg2excp.ebrk_excp_en
+  }
   excp.io.excp2Csr  <> csr.io.excp_intf
 
   excp.io.ext_irq := io.ext_irq
