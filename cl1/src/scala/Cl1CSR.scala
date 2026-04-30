@@ -404,5 +404,12 @@ class Cl1CSR() extends Module {
   dbg.step_r      := step
 
   dontTouch(mstatus)
+  dontTouch(mie)
+  dontTouch(mip)
+  dontTouch(mepc)
+  dontTouch(mcause)
+  dontTouch(mtvec)
+  dontTouch(mscratch)
+  dontTouch(misa)
 
 }
