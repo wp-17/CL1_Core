@@ -111,10 +111,11 @@ class Cl1EXCP() extends Module with TrapCode {
                         tmr_irq & mtie
     val irq_mask    =   ~mie | debug_irq_mask
     val irq_req     =  irq_req_raw & ~irq_mask
+    // MEI > MSI > MTI for simultaneously enabled & pending M-mode interrupts.
     val irq_casue   =  MuxCase(0.U, Seq(
+                        (ext_irq & meie) -> M_EXTER_IRQ,
                         (sft_irq & msie) -> M_SFTER_IRQ,
-                        (tmr_irq & mtie) -> M_TIMER_IRQ,
-                        (ext_irq & meie) -> M_EXTER_IRQ
+                        (tmr_irq & mtie) -> M_TIMER_IRQ
     ))
 
     val excp_take_en    = cmt_ecall | ebrk_excp_en | excp_valid
