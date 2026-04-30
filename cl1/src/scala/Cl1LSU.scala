@@ -6,6 +6,7 @@ import chisel3._
 import chisel3.util._
 
 import Control._
+import cl1.Cl1Config._
 import cl1.SimpleMask._
 
 class LSU2WBSignal extends Bundle {
@@ -101,10 +102,13 @@ class Cl1LSU extends Module {
   ))
 
   val addr = bypReq.bits.addr
+  // Under formal verification, drive the bus address as a word-aligned
+  // address so that RVFI's rvfi_mem_addr matches the riscv-formal spec
+  val bus_addr = if (FORMAL_VERIF) Cat(addr(31, 2), 0.U(2.W)) else addr
   val width = bypReq.bits.memType(2, 1)
   val wen  = bypReq.bits.memType(3)
 
-  io.out.req.bits.addr := addr
+  io.out.req.bits.addr := bus_addr
   val d_cached = if(globalConfig.simpleSocTest) SimpleSocMemoryMap.isDCacheable(addr) else MemoryMap.isDCacheable(addr)
   io.out.req.bits.cache := d_cached
   // io.out.req.bits.cache := false.B
