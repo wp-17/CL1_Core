@@ -46,6 +46,7 @@
       devShell = pkgs.mkShell {
           buildInputs = [
             # === HOST Tools (run on your machine) ===
+            pkgs.jdk21
             pkgs.mill
             pkgs.verilator
             pkgs.gtkwave
@@ -71,8 +72,12 @@
         # 设置环境变量（可选）
         shellHook = ''
           export OBJCACHE=ccache
-          echo "Welcome to the digtal sim development environment!"
-          exec zsh
+          export JAVA_HOME=${pkgs.jdk21}
+          echo "Welcome to the digital sim development environment!"
+          # Only exec zsh for interactive terminals (not VS Code Remote sessions)
+          if [ -n "$PS1" ] && [ -z "$VSCODE_INJECTION" ]; then
+            exec zsh
+          fi
         '';
       };
     in
