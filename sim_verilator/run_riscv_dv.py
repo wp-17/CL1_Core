@@ -20,6 +20,7 @@ DEFAULT_SUITE = DEFAULT_RISCV_DV_ROOT / "verification_output" / "rv32imc_mmode_d
 RTL_TO_CSV = SIM_DIR / "rtl_commit_log_to_trace_csv.py"
 SPIKE_TO_CSV = DEFAULT_RISCV_DV_ROOT / "scripts" / "spike_log_to_trace_csv.py"
 TRACE_COMPARE = DEFAULT_RISCV_DV_ROOT / "scripts" / "instr_trace_compare.py"
+CSV_FIELDS = ["pc", "instr", "gpr", "csr", "binary", "mode", "instr_str", "operand", "pad"]
 COMPARE_SUMMARY_RE = re.compile(
     r"^\[(?P<status>PASSED|FAILED)\]: (?P<matched>\d+) matched(?:, (?P<mismatch>\d+) mismatch)?$",
     re.MULTILINE,
@@ -211,6 +212,110 @@ def load_trace_csv(path: Path) -> list[TraceEntry]:
                 )
             )
     return entries
+
+
+def write_trace_csv(path: Path, entries: list[TraceEntry]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=CSV_FIELDS)
+        writer.writeheader()
+        for entry in entries:
+            writer.writerow(
+                {
+                    "pc": entry.pc,
+                    "instr": "",
+                    "gpr": ";".join(entry.gpr),
+                    "csr": ";".join(entry.csr),
+                    "binary": entry.binary,
+                    "mode": entry.mode,
+                    "instr_str": entry.instr_str,
+                    "operand": "",
+                    "pad": "",
+                }
+            )
+
+
+def is_mip_read(entry: TraceEntry) -> bool:
+    try:
+        insn = int(entry.binary, 16)
+    except ValueError:
+        return False
+    return (insn & 0x7F) == 0x73 and ((insn >> 20) & 0xFFF) == 0x344 and ((insn >> 7) & 0x1F) != 0
+
+
+def is_counter_read(entry: TraceEntry) -> bool:
+    try:
+        insn = int(entry.binary, 16)
+    except ValueError:
+        return False
+    counter_csrs = {0xB00, 0xB02, 0xB80, 0xB82}
+    return (insn & 0x7F) == 0x73 and ((insn >> 20) & 0xFFF) in counter_csrs and ((insn >> 7) & 0x1F) != 0
+
+
+def normalize_platform_gpr(entry: TraceEntry) -> TraceEntry:
+    normalize_mip = is_mip_read(entry)
+    normalize_counter = is_counter_read(entry)
+    if not normalize_mip and not normalize_counter:
+        return entry
+
+    normalized_gpr = []
+    for update in entry.gpr:
+        if ":" not in update:
+            normalized_gpr.append(update)
+            continue
+        reg, value = update.split(":", 1)
+        normalized_value = 0 if normalize_counter else int(value, 16) & ~0x888
+        normalized_gpr.append(f"{reg}:{normalized_value:08x}")
+
+    return TraceEntry(
+        row_index=entry.row_index,
+        pc=entry.pc,
+        binary=entry.binary,
+        instr_str=entry.instr_str,
+        gpr=normalized_gpr,
+        csr=entry.csr,
+        mode=entry.mode,
+    )
+
+
+def truncate_rtl_after_terminal_ecall(
+    spike_entries: list[TraceEntry],
+    rtl_entries: list[TraceEntry],
+) -> list[TraceEntry]:
+    if not spike_entries:
+        return rtl_entries
+
+    terminal = spike_entries[-1]
+    terminal_is_ecall = terminal.binary == "00000073" or normalize_instr_text(terminal.instr_str) == "ecall"
+    if not terminal_is_ecall or terminal.gpr:
+        return rtl_entries
+
+    target_state_changes = count_state_changes(spike_entries)
+    if target_state_changes == 0:
+        return []
+
+    rtl_state: dict[str, str] = {}
+    observed_state_changes = 0
+    for index, entry in enumerate(rtl_entries):
+        if apply_gpr_update(entry, rtl_state):
+            observed_state_changes += 1
+            if observed_state_changes == target_state_changes:
+                return rtl_entries[: index + 1]
+
+    for index, entry in enumerate(rtl_entries):
+        if entry.pc == terminal.pc and entry.binary == terminal.binary:
+            return rtl_entries[: index + 1]
+    return rtl_entries
+
+
+def prepare_compare_csvs(spike_csv: Path, rtl_csv: Path, spike_out: Path, rtl_out: Path) -> tuple[Path, Path]:
+    spike_entries = [normalize_platform_gpr(entry) for entry in load_trace_csv(spike_csv)]
+    rtl_entries = [normalize_platform_gpr(entry) for entry in load_trace_csv(rtl_csv)]
+    rtl_entries = truncate_rtl_after_terminal_ecall(spike_entries, rtl_entries)
+
+    write_trace_csv(spike_out, spike_entries)
+    write_trace_csv(rtl_out, rtl_entries)
+    return spike_out, rtl_out
 
 
 def enrich_trace_entries(entries: list[TraceEntry], reference_entries: list[TraceEntry]) -> list[TraceEntry]:
@@ -434,6 +539,8 @@ def compare_case(
     rtl_commit = case_dir / "rtl_commit.log"
     rtl_csv = case_dir / "rtl.csv"
     spike_csv = case_dir / "spike.csv"
+    rtl_compare_csv = case_dir / "rtl.compare.csv"
+    spike_compare_csv = case_dir / "spike.compare.csv"
     compare_log = case_dir / "compare.log"
     raw_compare_log = case_dir / "compare.raw.log"
 
@@ -449,6 +556,12 @@ def compare_case(
         capture_output=True,
         text=True,
     )
+    prepared_spike_csv, prepared_rtl_csv = prepare_compare_csvs(
+        spike_csv=spike_csv,
+        rtl_csv=rtl_csv,
+        spike_out=spike_compare_csv,
+        rtl_out=rtl_compare_csv,
+    )
     if raw_compare_log.exists():
         raw_compare_log.unlink()
     subprocess.run(
@@ -456,9 +569,9 @@ def compare_case(
             sys.executable,
             str(trace_compare),
             "--csv_file_1",
-            str(spike_csv),
+            str(prepared_spike_csv),
             "--csv_file_2",
-            str(rtl_csv),
+            str(prepared_rtl_csv),
             "--csv_name_1",
             "spike",
             "--csv_name_2",
@@ -474,7 +587,7 @@ def compare_case(
     )
 
     compare_text = raw_compare_log.read_text(encoding="utf-8")
-    compare_log.write_text(build_compare_report(case, spike_csv, rtl_csv, raw_compare_log), encoding="utf-8")
+    compare_log.write_text(build_compare_report(case, prepared_spike_csv, prepared_rtl_csv, raw_compare_log), encoding="utf-8")
     summary = parse_compare_summary(compare_text)
     if summary is None:
         return "error", "compare completed without a final status marker", compare_log

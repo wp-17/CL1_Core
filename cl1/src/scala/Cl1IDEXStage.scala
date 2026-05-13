@@ -40,6 +40,7 @@ class IDEX2WBSignal extends Bundle {
   val isCInst      = Output(Bool())
   val isTrap       = Output(Bool())
   val trapCode     = Output(UInt(8.W))
+  val trapValue    = Output(UInt(32.W))
   val dx_ready     = Output(Bool())
 }
 
@@ -132,13 +133,18 @@ class Cl1IDEXStage extends Module with TrapCode {
 
   val jType = ctrl.jType
   val csrType = ctrl.csrType
+  val privInstr = priv_dec(inst)
   val is_jalr = jType(1)
   val is_jal = jType(0)
   val isPRIV  = csrType.andR //TODO:
+  val isCSR = csrType.orR && !isPRIV
   val isCSRRW = csrType(CSRRW_BIT) && !isPRIV
   val isCSRRC = csrType(CSRRC_BIT) && !isPRIV
   val isCSRRS = csrType(CSRRS_BIT) && !isPRIV
   val isCSRI  = csrType(CSRI_BIT)  && !isPRIV
+  val csrWrites = isCSRRW || ((isCSRRC || isCSRRS) && rs1.orR)
+  val isIllegalCSR = isCSR && (!CSRs.isMachineReadable(csr_idx) || (csrWrites && CSRs.isReadOnly(csr_idx)))
+  val isIllegalInst = ctrl.illegal || io.pplIn.bits.rvcIllegal || (isPRIV && !privInstr.orR) || isIllegalCSR
   val aSel    = ctrl.aSel
   val bSel    = ctrl.bSel
 
@@ -193,14 +199,14 @@ class Cl1IDEXStage extends Module with TrapCode {
   val is_store = ctrl.memType(MEM_LS_BIT)
   val is_mem = ctrl.memType.orR
 
-  val csrRden  = dx_valid & (isCSRRW & rd.orR | ( isCSRRC | isCSRRS ))  & ~dx_stall & ~dx_flush
-  val csrWren  = dx_valid & (isCSRRW | ( isCSRRC | isCSRRS ) & rs1.orR)  & ~dx_stall & ~dx_flush
+  val csrRden  = dx_valid & !isIllegalInst & (isCSRRW & rd.orR | ( isCSRRC | isCSRRS ))  & ~dx_stall & ~dx_flush
+  val csrWren  = dx_valid & !isIllegalInst & csrWrites  & ~dx_stall & ~dx_flush
 
   val rs1_ren  = rs1.orR
   val rs2_ren  = rs2.orR
 
   val rd_notzero = rd.orR
-  val rd_wen = rd_notzero & ctrl.wbWen
+  val rd_wen = rd_notzero & ctrl.wbWen & !isIllegalInst
 
   io.csrRen := csrRden
   io.csrAddr := csr_idx
@@ -278,7 +284,7 @@ class Cl1IDEXStage extends Module with TrapCode {
   val mem_is_word = ctrl.memType(2, 1) === "b11".U
   val mem_misaligned = is_mem && ((mem_is_half && mem_addr(0) =/= 0.U) || (mem_is_word && mem_addr(1, 0) =/= 0.U))
 
-  io.mem.valid := dx_valid && !dx_exec_done && !dx_flush && (is_mem && !mem_misaligned) && !dx_stall
+  io.mem.valid := dx_valid && !dx_exec_done && !dx_flush && (is_mem && !mem_misaligned) && !isIllegalInst && !dx_stall
   io.mem.bits.addr := mem_addr
   io.mem.bits.memType := ctrl.memType
   io.mem.bits.wdata := io.rs2Value
@@ -364,7 +370,7 @@ class Cl1IDEXStage extends Module with TrapCode {
                     op_is_csrread -> io.csrData,
                     op_is_other   -> alu.io.misc_req.res
                   ))
-  pplInfo.privInstr := priv_dec(inst)
+  pplInfo.privInstr := privInstr
   pplInfo.csrWen := csrWren
   pplInfo.csrWdat := Mux1H(Seq(
                      isCSRRW              -> Mux(isCSRI, csrImm, io.rs1Value),
@@ -377,8 +383,15 @@ class Cl1IDEXStage extends Module with TrapCode {
   pplInfo.memType := ctrl.memType
   pplInfo.isCInst := io.pplIn.bits.isCInst
   pplInfo.cInst := io.pplIn.bits.cInst
-  pplInfo.isTrap := mem_misaligned
-  pplInfo.trapCode := Mux(mem_misaligned, Mux(is_store, STORE_MISALIGNED_EXPT(7,0), LOAD_MISALIGNED_EXPT(7,0)), 0.U(8.W))
+  pplInfo.isTrap := isIllegalInst || mem_misaligned
+  pplInfo.trapCode := MuxCase(0.U(8.W), Seq(
+    isIllegalInst  -> INST_ILLEGAL_EXPT(7,0),
+    mem_misaligned -> Mux(is_store, STORE_MISALIGNED_EXPT(7,0), LOAD_MISALIGNED_EXPT(7,0))
+  ))
+  pplInfo.trapValue := MuxCase(0.U(32.W), Seq(
+    isIllegalInst  -> Mux(io.pplIn.bits.rvcIllegal, ZeroExt(io.pplIn.bits.cInst, 32), inst),
+    is_mem         -> mem_addr
+  ))
   pplInfo.dx_ready := ready_go
 
   io.pplOut.valid := wb_valid_n

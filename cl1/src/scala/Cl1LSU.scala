@@ -151,7 +151,7 @@ class Cl1LSU extends Module {
     req_buf.memType := bypReq.bits.memType
     req_buf.mask    := mask
   }
-  io.in.resp.bits.err := 0.U //TODO: add err
+  io.in.resp.bits.err := io.out.rsp.bits.err
   val rdata = io.out.rsp.bits.data
   //TODO: optimize this !!!
   val one_byte_rdata = Mux1H(Seq(

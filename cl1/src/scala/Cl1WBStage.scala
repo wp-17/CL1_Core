@@ -17,7 +17,7 @@ class spike_diff extends Bundle {
   val isCInst = Output(Bool())
 }
 
-class Cl1WBStage extends Module {
+class Cl1WBStage extends Module with TrapCode {
 
   val io = IO(new Bundle {
     val pplIn = Flipped(Decoupled(new IDEX2WBSignal()))
@@ -71,12 +71,13 @@ class Cl1WBStage extends Module {
   val isValidEret   = wb_valid && wb_mret
   val isValidWfi    = wb_valid && wb_wfi
   val isEbreak      = wb_valid && wb_ebreak 
-  val isDret        = wb_valid && wb_dret  
-  val is_valid_mem_err = false.B
+  val isDret        = wb_valid && wb_dret
 
   val is_mem = pplIn.memType.orR
   val is_mem_load = ~pplIn.memType(3) & pplIn.memType(2,0).orR
+  val is_mem_store = pplIn.memType(3) & pplIn.memType(2,0).orR
   io.mem.ready := wb_valid && is_mem
+  val is_valid_mem_err = is_mem && io.mem.fire && io.mem.bits.err.orR
 
 
   val not_mem = ~is_mem
@@ -107,10 +108,10 @@ class Cl1WBStage extends Module {
   val wb_commit = wb_valid && ready_go && !io.flush
 
   val wen = pplIn.wen
-  io.wen := wb_commit && wen
+  io.wen := wb_commit && wen && !is_valid_mem_err
 
   io.csrWdat := pplIn.csrWdat
-  io.csrWen   := wb_commit && pplIn.csrWen
+  io.csrWen   := wb_commit && pplIn.csrWen && !is_valid_mem_err
 
   val wb_pc = pplIn.pc
   val diff_commit = wb_valid && ready_go && (!io.flush | wb_ecall | wb_mret)
@@ -141,8 +142,13 @@ class Cl1WBStage extends Module {
   io.toExcp.wb_valid  := wb_valid
   io.toExcp.wb_pc     := wb_pc
   io.toExcp.memNoOutStanding := Mux(is_mem, io.mem.fire, true.B)
-  io.toExcp.excp_valid := io.pplIn.bits.isTrap && wb_valid
-  io.toExcp.excp_code  := io.pplIn.bits.trapCode
+  io.toExcp.excp_valid := (io.pplIn.bits.isTrap && wb_valid) || (is_valid_mem_err && wb_valid)
+  io.toExcp.excp_code  := Mux(
+    is_valid_mem_err,
+    Mux(is_mem_store, STORE_ACCESS_EXPT(7,0), LOAD_ACCESS_EXPT(7,0)),
+    io.pplIn.bits.trapCode
+  )
+  io.toExcp.excp_tval  := io.pplIn.bits.trapValue
 
 
 // difftest

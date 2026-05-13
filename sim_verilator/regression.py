@@ -228,6 +228,13 @@ def direct_checks(max_cycles: int) -> list[CheckResult]:
     )
     results.append(
         run_command(
+            name="illegal-instruction",
+            cmd=[str(SIM_BIN), "--max-cycles", str(max_cycles), str(artifact("illegal_instruction_pass", "elf"))],
+            must_contain=["PASS", "host exit register write"],
+        )
+    )
+    results.append(
+        run_command(
             name="fail-detection",
             cmd=[str(SIM_BIN), "--max-cycles", str(max_cycles), str(artifact("host_exit_fail", "elf"))],
             expected_rc=1,
@@ -241,7 +248,7 @@ def batch_checks(max_cycles: int) -> list[CheckResult]:
     results: list[CheckResult] = []
     with tempfile.TemporaryDirectory(prefix="cl1-regression-pass-") as tmpdir:
         pass_dir = Path(tmpdir) / "pass"
-        stage_case_dir(pass_dir, ["host_exit_pass", "tohost_pass", "ebreak_pass"])
+        stage_case_dir(pass_dir, ["host_exit_pass", "tohost_pass", "ebreak_pass", "illegal_instruction_pass"])
         for prefer in ("elf", "bin", "hex"):
             results.append(
                 run_command(

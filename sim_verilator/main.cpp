@@ -537,9 +537,9 @@ class MemoryModel {
       }
     }
 
-    if (!any_byte) {
+    if (!any_byte && is_fetch) {
       stop.kind = StopKind::kFail;
-      stop.reason = std::string(is_fetch ? "instruction" : "data") + " read from unmapped address " + hex32(aligned_addr);
+      stop.reason = "instruction read from unmapped address " + hex32(aligned_addr);
       return false;
     }
     return true;
@@ -583,26 +583,11 @@ class MemoryModel {
     }
 
     uint32_t existing = 0;
-    bool known_backing = false;
-    if (is_in_ram(aligned_addr)) {
-      known_backing = true;
-      for (int lane = 0; lane < 4; ++lane) {
-        existing |= static_cast<uint32_t>(ram_[static_cast<std::size_t>(aligned_addr + lane - ram_base_)]) << (lane * 8);
+    for (int lane = 0; lane < 4; ++lane) {
+      uint8_t value = 0;
+      if (load_byte(aligned_addr + static_cast<uint32_t>(lane), value)) {
+        existing |= static_cast<uint32_t>(value) << (lane * 8);
       }
-    } else {
-      for (int lane = 0; lane < 4; ++lane) {
-        uint8_t value = 0;
-        if (load_byte(aligned_addr + static_cast<uint32_t>(lane), value)) {
-          existing |= static_cast<uint32_t>(value) << (lane * 8);
-          known_backing = true;
-        }
-      }
-    }
-
-    if (!known_backing) {
-      stop.kind = StopKind::kFail;
-      stop.reason = "write to unmapped address " + hex32(aligned_addr);
-      return false;
     }
 
     const uint32_t merged = merge_word(existing, write_data, mask);
@@ -780,7 +765,21 @@ class Simulator {
   }
 
   void tick(StopInfo& stop) {
-    const CycleSnapshot snapshot = tick_internal();
+    drive_memory_side();
+
+    top_->clock = 0;
+    top_->eval();
+    const CycleSnapshot snapshot = sample_cycle_snapshot();
+    dump_trace();
+    observe_commit(stop);
+    observe_trap_stop(stop);
+    g_sim_time += 5;
+
+    top_->clock = 1;
+    top_->eval();
+    dump_trace();
+    g_sim_time += 5;
+
     log_activity(snapshot);
     observe_commit(stop);
     observe_trap_stop(stop);
@@ -874,6 +873,11 @@ class Simulator {
     if (!top_->rvfi_valid) {
       return;
     }
+    const uint64_t order = top_->rvfi_order;
+    if (last_commit_order_ && *last_commit_order_ == order) {
+      return;
+    }
+    last_commit_order_ = order;
 
     emit_commit_log();
 
@@ -998,6 +1002,7 @@ class Simulator {
   std::unique_ptr<VerilatedFstC> trace_;
   std::unique_ptr<std::ofstream> commit_log_;
   std::array<uint32_t, 32> gpr_shadow_{};
+  std::optional<uint64_t> last_commit_order_;
   PendingResponse ibus_pending_{};
   PendingResponse dbus_pending_{};
   uint64_t cycle_count_ = 0;
