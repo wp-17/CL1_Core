@@ -121,43 +121,75 @@ class CacheBus2Axi4 extends Module {
       val out = new AXI4(32, 32, 2)
     })
 
-    val req1st_set = io.in.req.fire & io.in.req.bits.wen & ~io.in.req.bits.last
-    val req1st_clr = io.in.req.fire & io.in.req.bits.wen & io.in.req.bits.last
-    val req1st_en  = req1st_set | req1st_clr
-    val req1st_n   = req1st_set | ~req1st_clr
-    val reqnot1st = RegEnable(req1st_n, false.B, req1st_en)
-    val req1st    = ~reqnot1st
+    // Fall through when idle, but keep any AXI channel that did not handshake.
+    val reqBuf             = Reg(chiselTypeOf(io.in.req.bits))
+    val reqBufValid        = RegInit(false.B)
+    val pendAw             = RegInit(false.B)
+    val pendW              = RegInit(false.B)
+    val pendAr             = RegInit(false.B)
+    val writeBurstActive   = RegInit(false.B)
 
-    io.out.aw.valid         := io.in.req.valid & io.in.req.bits.wen & io.out.w.ready & req1st
-    io.out.aw.bits.awaddr   := io.in.req.bits.addr
+    val srcBits            = Mux(reqBufValid, reqBuf, io.in.req.bits)
+    val srcValid           = reqBufValid | io.in.req.valid
+    val needAw             = Mux(reqBufValid, pendAw, io.in.req.bits.wen & ~writeBurstActive)
+    val needW              = Mux(reqBufValid, pendW, io.in.req.bits.wen)
+    val needAr             = Mux(reqBufValid, pendAr, ~io.in.req.bits.wen)
+
+    io.out.aw.valid         := srcValid & needAw
+    io.out.aw.bits.awaddr   := srcBits.addr
     io.out.aw.bits.awid     := 0.U
-    io.out.aw.bits.awlen    := io.in.req.bits.len
-    io.out.aw.bits.awsize   := io.in.req.bits.size
+    io.out.aw.bits.awlen    := srcBits.len
+    io.out.aw.bits.awsize   := srcBits.size
     io.out.aw.bits.awburst  := AXIValue.AX_INCR
     io.out.aw.bits.awcache  := 0.U
     io.out.aw.bits.awprot   := 0.U
     io.out.aw.bits.awlock   := 0.U
 
-    io.out.w.valid          := io.in.req.valid & io.in.req.bits.wen & (req1st & io.out.aw.ready | ~req1st)
-    io.out.w.bits.wdata     := io.in.req.bits.data
-    io.out.w.bits.wstrb     := io.in.req.bits.mask
-    io.out.w.bits.wlast     := io.in.req.bits.last
+    io.out.w.valid          := srcValid & needW
+    io.out.w.bits.wdata     := srcBits.data
+    io.out.w.bits.wstrb     := srcBits.mask
+    io.out.w.bits.wlast     := srcBits.last
 
-    io.out.ar.valid         := io.in.req.valid & ~io.in.req.bits.wen
-    io.out.ar.bits.araddr   := io.in.req.bits.addr
+    io.out.ar.valid         := srcValid & needAr
+    io.out.ar.bits.araddr   := srcBits.addr
     io.out.ar.bits.arid     := 0.U
-    io.out.ar.bits.arlen    := io.in.req.bits.len
-    io.out.ar.bits.arsize   := io.in.req.bits.size
+    io.out.ar.bits.arlen    := srcBits.len
+    io.out.ar.bits.arsize   := srcBits.size
     io.out.ar.bits.arburst  := AXIValue.AX_INCR
     io.out.ar.bits.arlock   := 0.U
     io.out.ar.bits.arcache  := 0.U
     io.out.ar.bits.arprot   := 0.U
 
+    val awLeft             = srcValid & needAw & ~io.out.aw.fire
+    val wLeft              = srcValid & needW & ~io.out.w.fire
+    val arLeft             = srcValid & needAr & ~io.out.ar.fire
+    val reqDone            = srcValid & ~awLeft & ~wLeft & ~arLeft
+    val reqProgress        = needAw & io.out.aw.fire |
+                             needW  & io.out.w.fire  |
+                             needAr & io.out.ar.fire
 
-    val write_req_ready     = Mux(req1st,io.out.w.ready & io.out.aw.ready, io.out.w.ready)     
-    io.in.req.ready         := Mux(io.in.req.bits.wen, write_req_ready, io.out.ar.ready)
+    io.in.req.ready        := ~reqBufValid & (!io.in.req.valid | reqProgress)
 
-    val rsp_w               = RegEnable(io.in.req.bits.wen, false.B, io.in.req.fire & io.in.req.bits.last)
+    when (io.in.req.fire) {
+      when (!reqDone) {
+        reqBuf             := io.in.req.bits
+        reqBufValid        := true.B
+        pendAw             := awLeft
+        pendW              := wLeft
+        pendAr             := arLeft
+      }
+      writeBurstActive     := io.in.req.bits.wen & ~io.in.req.bits.last
+    } .elsewhen (reqBufValid) {
+      reqBufValid          := ~reqDone
+      pendAw               := awLeft
+      pendW                := wLeft
+      pendAr               := arLeft
+    }
+
+    val rsp_w              = RegInit(false.B)
+    when (io.in.req.fire & io.in.req.bits.last) {
+      rsp_w := io.in.req.bits.wen
+    }
     io.in.rsp.valid         := Mux(rsp_w, io.out.b.valid, io.out.r.valid)
     io.in.rsp.bits.err      := Mux(rsp_w, io.out.b.bits.bresp, io.out.r.bits.rresp)
     io.in.rsp.bits.data     := io.out.r.bits.rdata
