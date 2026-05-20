@@ -74,7 +74,7 @@ stage_cases() {
   rm -rf "${PASS_DIR}" "${NEG_DIR}"
   mkdir -p "${PASS_DIR}" "${NEG_DIR}"
 
-  for name in host_exit_pass tohost_pass ebreak_pass custom_mmio_pass illegal_instruction_pass; do
+  for name in host_exit_pass tohost_pass ebreak_pass custom_mmio_pass illegal_instruction_pass access_fault_pass config_region_pass; do
     for ext in elf bin hex map dis; do
       ln -sf "../${name}.${ext}" "${PASS_DIR}/${name}.${ext}"
     done
@@ -98,6 +98,11 @@ main() {
   link_test "ebreak_pass" "${SELFTEST_DIR}/ebreak_pass.c"
   link_test "custom_mmio_pass" "${SELFTEST_DIR}/custom_mmio_pass.c"
   link_test "illegal_instruction_pass" "${SELFTEST_DIR}/illegal_instruction_pass.S"
+  link_test "access_fault_pass" "${SELFTEST_DIR}/access_fault_pass.S"
+  link_test "config_region_pass" "${SELFTEST_DIR}/config_region_pass.S"
+  link_test "interrupt_external_pass" "${SELFTEST_DIR}/interrupt_external_pass.S"
+  link_test "interrupt_software_pass" "${SELFTEST_DIR}/interrupt_software_pass.S"
+  link_test "interrupt_timer_pass" "${SELFTEST_DIR}/interrupt_timer_pass.S"
 
   stage_cases
   echo "[selftest] artifacts ready under ${BUILD_DIR}"

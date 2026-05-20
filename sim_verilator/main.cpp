@@ -1,5 +1,6 @@
 #include <elf.h>
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cctype>
@@ -43,6 +44,145 @@ constexpr uint32_t kDefaultHostExitAddr = 0x10000004u;
 constexpr uint64_t kDefaultMaxCycles = 1'000'000ull;
 constexpr uint32_t kEbreakInsn = 0x00100073u;
 constexpr uint32_t kCompressedEbreakInsn = 0x00009002u;
+
+enum class MemoryAccessKind {
+  kFetch,
+  kRead,
+  kWrite
+};
+
+struct AddressRegion {
+  std::string name;
+  uint32_t base = 0;
+  uint64_t size = 0;
+  bool readable = true;
+  bool writable = true;
+  bool executable = true;
+
+  bool contains(uint32_t addr) const {
+    if (size == 0) {
+      return false;
+    }
+    const uint64_t offset = static_cast<uint64_t>(addr) - static_cast<uint64_t>(base);
+    return addr >= base && offset < size;
+  }
+
+  bool allows(MemoryAccessKind kind) const {
+    switch (kind) {
+      case MemoryAccessKind::kFetch:
+        return executable;
+      case MemoryAccessKind::kRead:
+        return readable;
+      case MemoryAccessKind::kWrite:
+        return writable;
+    }
+    return false;
+  }
+};
+
+struct IrqSignals {
+  bool ext = false;
+  bool sft = false;
+  bool tmr = false;
+};
+
+struct RandomIrqConfig {
+  IrqSignals enabled;
+  uint64_t seed = 1;
+  uint64_t min_delay = 8;
+  uint64_t max_delay = 64;
+  uint64_t min_width = 1;
+  uint64_t max_width = 4;
+
+  bool any_enabled() const {
+    return enabled.ext || enabled.sft || enabled.tmr;
+  }
+};
+
+struct RandomIrqLineState {
+  bool enabled = false;
+  uint64_t delay_remaining = 0;
+  uint64_t width_remaining = 0;
+};
+
+class RandomIrqGenerator {
+ public:
+  explicit RandomIrqGenerator(const RandomIrqConfig& config) : config_(config), rng_state_(config.seed) {
+    if (rng_state_ == 0) {
+      rng_state_ = 0x9e3779b97f4a7c15ull;
+    }
+    ext_.enabled = config.enabled.ext;
+    sft_.enabled = config.enabled.sft;
+    tmr_.enabled = config.enabled.tmr;
+    reset_line(ext_);
+    reset_line(sft_);
+    reset_line(tmr_);
+  }
+
+  IrqSignals step() {
+    return IrqSignals{
+        step_line(ext_),
+        step_line(sft_),
+        step_line(tmr_),
+    };
+  }
+
+ private:
+  uint64_t next_u64() {
+    uint64_t x = rng_state_;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    rng_state_ = x;
+    return x;
+  }
+
+  uint64_t uniform(uint64_t min_value, uint64_t max_value) {
+    if (max_value <= min_value) {
+      return min_value;
+    }
+    return min_value + (next_u64() % (max_value - min_value + 1));
+  }
+
+  void reset_line(RandomIrqLineState& line) {
+    line.width_remaining = 0;
+    line.delay_remaining = line.enabled ? uniform(config_.min_delay, config_.max_delay) : 0;
+  }
+
+  void schedule_next(RandomIrqLineState& line) {
+    line.delay_remaining = uniform(config_.min_delay, config_.max_delay);
+  }
+
+  bool step_line(RandomIrqLineState& line) {
+    if (!line.enabled) {
+      return false;
+    }
+    if (line.width_remaining != 0) {
+      --line.width_remaining;
+      if (line.width_remaining == 0) {
+        schedule_next(line);
+      }
+      return true;
+    }
+    if (line.delay_remaining != 0) {
+      --line.delay_remaining;
+      return false;
+    }
+
+    line.width_remaining = uniform(config_.min_width, config_.max_width);
+    --line.width_remaining;
+    if (line.width_remaining == 0) {
+      schedule_next(line);
+    }
+    return true;
+  }
+
+  RandomIrqConfig config_;
+  uint64_t rng_state_;
+  RandomIrqLineState ext_;
+  RandomIrqLineState sft_;
+  RandomIrqLineState tmr_;
+};
 
 std::string hex32(uint32_t value) {
   std::ostringstream oss;
@@ -128,6 +268,123 @@ bool ends_with_case_insensitive(const std::string& text, const std::string& suff
   return true;
 }
 
+std::vector<std::string> split_colon_separated(const std::string& text) {
+  std::vector<std::string> parts;
+  std::size_t start = 0;
+  while (start <= text.size()) {
+    const auto end = text.find(':', start);
+    if (end == std::string::npos) {
+      parts.push_back(text.substr(start));
+      break;
+    }
+    parts.push_back(text.substr(start, end - start));
+    start = end + 1;
+  }
+  return parts;
+}
+
+bool looks_numeric_arg(const std::string& text) {
+  return !text.empty() && std::isdigit(static_cast<unsigned char>(text.front()));
+}
+
+IrqSignals parse_irq_lines_arg(const std::string& text) {
+  IrqSignals lines;
+  bool saw_line = false;
+  const auto parts = split_colon_separated(text);
+  for (const auto& raw_part : parts) {
+    std::string part = trim(raw_part);
+    std::transform(part.begin(), part.end(), part.begin(), [](unsigned char ch) {
+      return static_cast<char>(std::tolower(ch));
+    });
+    if (part.empty() || part == "none") {
+      continue;
+    }
+    saw_line = true;
+    if (part == "all") {
+      lines.ext = true;
+      lines.sft = true;
+      lines.tmr = true;
+    } else if (part == "ext" || part == "external") {
+      lines.ext = true;
+    } else if (part == "sft" || part == "soft" || part == "software") {
+      lines.sft = true;
+    } else if (part == "tmr" || part == "timer") {
+      lines.tmr = true;
+    } else {
+      throw std::runtime_error("bad --irq-lines `" + text + "`, expected ext/sft/tmr/all separated by ':'");
+    }
+  }
+  if (!saw_line) {
+    throw std::runtime_error("bad --irq-lines `" + text + "`, at least one interrupt line is required");
+  }
+  return lines;
+}
+
+AddressRegion parse_address_region_arg(const std::string& text, std::size_t index) {
+  const auto parts = split_colon_separated(text);
+
+  std::string name = "extra_region_" + std::to_string(index);
+  std::string base_text;
+  std::string size_text;
+  std::string perms = "rwx";
+
+  if (parts.size() == 2 || (parts.size() == 3 && looks_numeric_arg(parts[0]))) {
+    base_text = parts[0];
+    size_text = parts[1];
+    if (parts.size() == 3) {
+      perms = parts[2];
+    }
+  } else if (parts.size() == 3 || parts.size() == 4) {
+    name = parts[0];
+    base_text = parts[1];
+    size_text = parts[2];
+    if (parts.size() == 4) {
+      perms = parts[3];
+    }
+  } else {
+    throw std::runtime_error(
+        "bad --region `" + text + "`, expected name:base:size[:rwx] or base:size[:rwx]");
+  }
+
+  name = trim(name);
+  base_text = trim(base_text);
+  size_text = trim(size_text);
+  perms = trim(perms);
+  if (name.empty() || base_text.empty() || size_text.empty()) {
+    throw std::runtime_error("bad --region `" + text + "`, name/base/size must be non-empty");
+  }
+
+  AddressRegion region;
+  region.name = name;
+  region.base = static_cast<uint32_t>(parse_u64_arg(base_text));
+  region.size = parse_u64_arg(size_text);
+  if (region.size == 0) {
+    throw std::runtime_error("bad --region `" + text + "`, size must be non-zero");
+  }
+
+  region.readable = false;
+  region.writable = false;
+  region.executable = false;
+  if (perms.empty()) {
+    perms = "rwx";
+  }
+  for (const unsigned char raw_ch : perms) {
+    const char ch = static_cast<char>(std::tolower(raw_ch));
+    if (ch == 'r') {
+      region.readable = true;
+    } else if (ch == 'w') {
+      region.writable = true;
+    } else if (ch == 'x') {
+      region.executable = true;
+    } else if (ch == '-') {
+      continue;
+    } else {
+      throw std::runtime_error("bad --region `" + text + "`, permission must use r/w/x/-");
+    }
+  }
+  return region;
+}
+
 enum class StopKind {
   kRunning,
   kPass,
@@ -157,10 +414,44 @@ struct Options {
   uint32_t uart_addr = kDefaultUartAddr;
   uint32_t host_exit_addr = kDefaultHostExitAddr;
   uint64_t max_cycles = kDefaultMaxCycles;
+  std::vector<AddressRegion> extra_regions;
+  RandomIrqConfig random_irq;
   std::string image_type = "auto";
   bool quiet = false;
   bool verbose = false;
 };
+
+std::vector<AddressRegion> build_address_regions(const Options& options) {
+  std::vector<AddressRegion> regions;
+  if (options.ram_size != 0) {
+    regions.push_back(AddressRegion{
+        "ram",
+        options.ram_base,
+        options.ram_size,
+        true,
+        true,
+        true,
+    });
+  }
+  regions.push_back(AddressRegion{
+      "uart",
+      options.uart_addr & ~0x3u,
+      4,
+      true,
+      true,
+      false,
+  });
+  regions.push_back(AddressRegion{
+      "host_exit",
+      options.host_exit_addr & ~0x3u,
+      4,
+      true,
+      true,
+      false,
+  });
+  regions.insert(regions.end(), options.extra_regions.begin(), options.extra_regions.end());
+  return regions;
+}
 
 struct BusRequest {
   uint32_t addr = 0;
@@ -198,6 +489,7 @@ class MemoryModel {
         ram_size_(options.ram_size),
         uart_addr_(options.uart_addr),
         host_exit_addr_(options.host_exit_addr),
+        address_regions_(build_address_regions(options)),
         ram_(static_cast<std::size_t>(options.ram_size), 0) {}
 
   bool load_image(const fs::path& image_path, const std::string& image_type, uint32_t load_addr, StopInfo& stop) {
@@ -254,7 +546,7 @@ class MemoryModel {
       response.data = 0;
     } else {
       uint32_t data = 0;
-      response.err = !read_word(aligned_addr, data, is_fetch, stop);
+      response.err = !read_word(aligned_addr, request.mask, data, is_fetch, stop);
       response.data = data;
     }
     return response;
@@ -489,6 +781,32 @@ class MemoryModel {
     return false;
   }
 
+  const AddressRegion* find_region(uint32_t addr) const {
+    for (const auto& region : address_regions_) {
+      if (region.contains(addr)) {
+        return &region;
+      }
+    }
+    return nullptr;
+  }
+
+  bool is_access_allowed(uint32_t addr, MemoryAccessKind kind) const {
+    const AddressRegion* region = find_region(addr);
+    return region != nullptr && region->allows(kind);
+  }
+
+  bool are_masked_bytes_accessible(uint32_t aligned_addr, uint8_t mask, MemoryAccessKind kind) const {
+    if (mask == 0) {
+      return true;
+    }
+    for (int lane = 0; lane < 4; ++lane) {
+      if (((mask >> lane) & 0x1u) && !is_access_allowed(aligned_addr + static_cast<uint32_t>(lane), kind)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   bool is_in_ram(uint32_t addr) const {
     if (ram_size_ == 0) {
       return false;
@@ -508,8 +826,18 @@ class MemoryModel {
     return merged;
   }
 
-  bool read_word(uint32_t aligned_addr, uint32_t& data, bool is_fetch, StopInfo& stop) const {
+  bool read_word(uint32_t aligned_addr, uint8_t mask, uint32_t& data, bool is_fetch, StopInfo& stop) const {
     data = 0;
+    const uint8_t effective_mask = is_fetch ? 0xFu : mask;
+    const MemoryAccessKind access_kind = is_fetch ? MemoryAccessKind::kFetch : MemoryAccessKind::kRead;
+
+    if (!are_masked_bytes_accessible(aligned_addr, effective_mask, access_kind)) {
+      if (is_fetch) {
+        stop.kind = StopKind::kFail;
+        stop.reason = "instruction read from unmapped address " + hex32(aligned_addr);
+      }
+      return false;
+    }
 
     if ((aligned_addr & ~0x3u) == (uart_addr_ & ~0x3u)) {
       data = 0;
@@ -528,19 +856,11 @@ class MemoryModel {
       return true;
     }
 
-    bool any_byte = false;
     for (int lane = 0; lane < 4; ++lane) {
       uint8_t value = 0;
       if (load_byte(aligned_addr + static_cast<uint32_t>(lane), value)) {
         data |= static_cast<uint32_t>(value) << (lane * 8);
-        any_byte = true;
       }
-    }
-
-    if (!any_byte && is_fetch) {
-      stop.kind = StopKind::kFail;
-      stop.reason = "instruction read from unmapped address " + hex32(aligned_addr);
-      return false;
     }
     return true;
   }
@@ -561,6 +881,10 @@ class MemoryModel {
   bool write_word(uint32_t aligned_addr, uint32_t write_data, uint8_t mask, StopInfo& stop) {
     if (mask == 0) {
       return true;
+    }
+
+    if (!are_masked_bytes_accessible(aligned_addr, mask, MemoryAccessKind::kWrite)) {
+      return false;
     }
 
     if ((aligned_addr & ~0x3u) == (uart_addr_ & ~0x3u)) {
@@ -622,6 +946,7 @@ class MemoryModel {
   uint64_t ram_size_;
   uint32_t uart_addr_;
   uint32_t host_exit_addr_;
+  std::vector<AddressRegion> address_regions_;
   std::vector<uint8_t> ram_;
   std::unordered_map<uint32_t, uint8_t> sparse_memory_;
   std::optional<uint32_t> tohost_addr_;
@@ -635,7 +960,10 @@ class MemoryModel {
 class Simulator {
  public:
   explicit Simulator(Options options)
-      : options_(std::move(options)), memory_(options_), top_(std::make_unique<VCl1Top>()) {
+      : options_(std::move(options)),
+        memory_(options_),
+        random_irq_(options_.random_irq),
+        top_(std::make_unique<VCl1Top>()) {
     gpr_shadow_.fill(0);
   }
 
@@ -699,6 +1027,16 @@ class Simulator {
     top_->io_dbus_rsp_valid = 0;
     top_->io_dbus_rsp_bits_data = 0;
     top_->io_dbus_rsp_bits_err = 0;
+  }
+
+  void drive_interrupts() {
+    IrqSignals irq;
+    if (options_.random_irq.any_enabled()) {
+      irq = random_irq_.step();
+    }
+    top_->io_ext_irq = irq.ext ? 1 : 0;
+    top_->io_sft_irq = irq.sft ? 1 : 0;
+    top_->io_tmr_irq = irq.tmr ? 1 : 0;
   }
 
   void setup_trace() {
@@ -765,6 +1103,7 @@ class Simulator {
   }
 
   void tick(StopInfo& stop) {
+    drive_interrupts();
     drive_memory_side();
 
     top_->clock = 0;
@@ -788,6 +1127,7 @@ class Simulator {
   }
 
   CycleSnapshot tick_internal() {
+    drive_interrupts();
     drive_memory_side();
 
     top_->clock = 0;
@@ -934,6 +1274,10 @@ class Simulator {
 
     std::cerr << "[sim][cycle " << cycle_count_ << "] "
               << "rst=" << static_cast<int>(top_->reset)
+              << " irq(ext=" << static_cast<int>(top_->io_ext_irq)
+              << " sft=" << static_cast<int>(top_->io_sft_irq)
+              << " tmr=" << static_cast<int>(top_->io_tmr_irq)
+              << ")"
               << " ibus(req_v=" << static_cast<int>(snapshot.ibus_req_valid)
               << " req_r=" << static_cast<int>(top_->io_ibus_req_ready)
               << " addr=" << hex32(top_->io_ibus_req_bits_addr)
@@ -998,6 +1342,7 @@ class Simulator {
 
   Options options_;
   MemoryModel memory_;
+  RandomIrqGenerator random_irq_;
   std::unique_ptr<VCl1Top> top_;
   std::unique_ptr<VerilatedFstC> trace_;
   std::unique_ptr<std::ofstream> commit_log_;
@@ -1019,6 +1364,11 @@ void print_usage(const char* argv0) {
       << "  --ram-size <bytes>               Simulated RAM size, supports K/M/G suffixes (default: 16M)\n"
       << "  --host-exit-addr <addr>          MMIO exit register address (default: 0x10000004)\n"
       << "  --uart-addr <addr>               MMIO UART TX register address (default: 0x10000000)\n"
+      << "  --region <name:base:size[:rwx]>  Add an allowed address region; repeatable\n"
+      << "  --irq-lines <ext:sft:tmr|all>    Enable random interrupt inputs\n"
+      << "  --irq-seed <value>               Seed for random interrupts (default: 1)\n"
+      << "  --irq-delay <min:max>            Cycles between interrupt pulses (default: 8:64)\n"
+      << "  --irq-width <min:max>            Interrupt pulse width in cycles (default: 1:4)\n"
       << "  --max-cycles <count>             Timeout in cycles (default: 1000000)\n"
       << "  --trace <path.fst>               Dump an FST waveform\n"
       << "  --commit-log <path>              Dump RVFI commit log lines\n"
@@ -1057,6 +1407,26 @@ Options parse_args(int argc, char** argv) {
       options.host_exit_addr = static_cast<uint32_t>(parse_u64_arg(need_value(arg)));
     } else if (arg == "--uart-addr") {
       options.uart_addr = static_cast<uint32_t>(parse_u64_arg(need_value(arg)));
+    } else if (arg == "--region") {
+      options.extra_regions.push_back(parse_address_region_arg(need_value(arg), options.extra_regions.size()));
+    } else if (arg == "--irq-lines") {
+      options.random_irq.enabled = parse_irq_lines_arg(need_value(arg));
+    } else if (arg == "--irq-seed") {
+      options.random_irq.seed = parse_u64_arg(need_value(arg));
+    } else if (arg == "--irq-delay") {
+      const auto parts = split_colon_separated(need_value(arg));
+      if (parts.size() != 2) {
+        throw std::runtime_error("bad --irq-delay, expected min:max");
+      }
+      options.random_irq.min_delay = parse_u64_arg(parts[0]);
+      options.random_irq.max_delay = parse_u64_arg(parts[1]);
+    } else if (arg == "--irq-width") {
+      const auto parts = split_colon_separated(need_value(arg));
+      if (parts.size() != 2) {
+        throw std::runtime_error("bad --irq-width, expected min:max");
+      }
+      options.random_irq.min_width = parse_u64_arg(parts[0]);
+      options.random_irq.max_width = parse_u64_arg(parts[1]);
     } else if (arg == "--max-cycles") {
       options.max_cycles = parse_u64_arg(need_value(arg));
     } else if (arg == "--trace") {
@@ -1084,6 +1454,15 @@ Options parse_args(int argc, char** argv) {
   }
   if (options.symbol_elf_path && !fs::exists(*options.symbol_elf_path)) {
     throw std::runtime_error("symbol ELF does not exist: `" + options.symbol_elf_path->string() + "`");
+  }
+  if (options.random_irq.min_delay > options.random_irq.max_delay) {
+    throw std::runtime_error("--irq-delay min must be <= max");
+  }
+  if (options.random_irq.min_width == 0 || options.random_irq.max_width == 0) {
+    throw std::runtime_error("--irq-width values must be non-zero");
+  }
+  if (options.random_irq.min_width > options.random_irq.max_width) {
+    throw std::runtime_error("--irq-width min must be <= max");
   }
   return options;
 }

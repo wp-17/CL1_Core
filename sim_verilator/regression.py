@@ -235,6 +235,53 @@ def direct_checks(max_cycles: int) -> list[CheckResult]:
     )
     results.append(
         run_command(
+            name="access-fault",
+            cmd=[str(SIM_BIN), "--max-cycles", str(max_cycles), str(artifact("access_fault_pass", "elf"))],
+            must_contain=["PASS", "host exit register write"],
+        )
+    )
+    results.append(
+        run_command(
+            name="config-region",
+            cmd=[
+                str(SIM_BIN),
+                "--region",
+                "test_region:0x60000000:4:rw",
+                "--max-cycles",
+                str(max_cycles),
+                str(artifact("config_region_pass", "elf")),
+            ],
+            must_contain=["PASS", "host exit register write"],
+        )
+    )
+    interrupt_cases = [
+        ("interrupt-external", "interrupt_external_pass", "ext", "11"),
+        ("interrupt-software", "interrupt_software_pass", "sft", "12"),
+        ("interrupt-timer", "interrupt_timer_pass", "tmr", "13"),
+    ]
+    for test_name, artifact_name, irq_line, seed in interrupt_cases:
+        results.append(
+            run_command(
+                name=test_name,
+                cmd=[
+                    str(SIM_BIN),
+                    "--irq-lines",
+                    irq_line,
+                    "--irq-seed",
+                    seed,
+                    "--irq-delay",
+                    "1:16",
+                    "--irq-width",
+                    "2:4",
+                    "--max-cycles",
+                    str(max_cycles),
+                    str(artifact(artifact_name, "elf")),
+                ],
+                must_contain=["PASS", "host exit register write"],
+            )
+        )
+    results.append(
+        run_command(
             name="fail-detection",
             cmd=[str(SIM_BIN), "--max-cycles", str(max_cycles), str(artifact("host_exit_fail", "elf"))],
             expected_rc=1,
@@ -248,7 +295,10 @@ def batch_checks(max_cycles: int) -> list[CheckResult]:
     results: list[CheckResult] = []
     with tempfile.TemporaryDirectory(prefix="cl1-regression-pass-") as tmpdir:
         pass_dir = Path(tmpdir) / "pass"
-        stage_case_dir(pass_dir, ["host_exit_pass", "tohost_pass", "ebreak_pass", "illegal_instruction_pass"])
+        stage_case_dir(
+            pass_dir,
+            ["host_exit_pass", "tohost_pass", "ebreak_pass", "illegal_instruction_pass", "access_fault_pass"],
+        )
         for prefer in ("elf", "bin", "hex"):
             results.append(
                 run_command(

@@ -84,6 +84,11 @@ These test programs are intentionally simple and are built from C plus a minimal
 - `tohost_pass.c`: validates ELF symbol-based `tohost` termination
 - `ebreak_pass.c`: validates the `ebreak` stop path
 - `custom_mmio_pass.c`: validates custom `--host-exit-addr` and `--uart-addr`
+- `access_fault_pass.S`: reads and writes an unmapped address and checks load/store access-fault traps
+- `config_region_pass.S`: writes and reads an extra simulator region added with `--region`
+- `interrupt_external_pass.S`: waits for a randomly injected machine external interrupt
+- `interrupt_software_pass.S`: waits for a randomly injected machine software interrupt
+- `interrupt_timer_pass.S`: waits for a randomly injected machine timer interrupt
 
 Two extra scripts were added for this:
 
@@ -198,6 +203,7 @@ Common examples:
 ./sim_verilator/build/cl1_verilator --load-addr 0x80000000 path/to/test.bin
 ./sim_verilator/build/cl1_verilator --trace wave.fst path/to/test.elf
 ./sim_verilator/build/cl1_verilator --symbol-elf path/to/test.elf path/to/test.bin
+./sim_verilator/build/cl1_verilator --irq-lines ext --irq-seed 11 selftest/build/interrupt_external_pass.elf
 ```
 
 Equivalent `make` wrapper:
@@ -253,6 +259,12 @@ With the `make` wrapper:
 make -C sim_verilator riscv-dv SUITE=../riscv-dv/verification_output/rv32imc_mmode_directed_suite
 ```
 
+To run every runnable suite under `verification_output`, pass the `verification_output` root instead:
+
+```bash
+make -C sim_verilator riscv-dv SUITE=../riscv-dv/verification_output
+```
+
 To also compare the RTL RVFI trace against the suite's `spike.log` files:
 
 ```bash
@@ -260,6 +272,8 @@ make -C sim_verilator riscv-dv \
   SUITE=../riscv-dv/verification_output/rv32imc_mmode_directed_suite \
   RVDV_ARGS="--compare"
 ```
+
+The same `--compare` option works when `SUITE` is the `verification_output` root.
 
 ## Batch Runner Behavior
 
@@ -287,6 +301,11 @@ Terminal output format:
 - `--load-addr <addr>`
 - `--ram-base <addr>`
 - `--ram-size <bytes>`
+- `--region <name:base:size[:rwx]>`
+- `--irq-lines <ext:sft:tmr|all>`
+- `--irq-seed <value>`
+- `--irq-delay <min:max>`
+- `--irq-width <min:max>`
 - `--host-exit-addr <addr>`
 - `--uart-addr <addr>`
 - `--max-cycles <count>`
@@ -370,6 +389,8 @@ The `full` suite checks:
 - verbose mode
 - quiet mode
 - custom MMIO base options
+- configurable simulator address regions and unmapped load/store access faults
+- random machine external/software/timer interrupt injection
 - `tohost` termination
 - host-exit MMIO termination
 - `ebreak` termination
@@ -391,7 +412,7 @@ The flow has been validated with the built-in regression suite.
 
 Latest verified result:
 
-- `full` suite: `15 passed, 0 failed`
+- `./sim_verilator/regression.py --suite full --no-build-sim --no-build-tests --max-cycles 5000`: `21 passed, 0 failed`
 
 Recommended software contract remains:
 

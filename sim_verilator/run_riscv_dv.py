@@ -21,6 +21,8 @@ RTL_TO_CSV = SIM_DIR / "rtl_commit_log_to_trace_csv.py"
 SPIKE_TO_CSV = DEFAULT_RISCV_DV_ROOT / "scripts" / "spike_log_to_trace_csv.py"
 TRACE_COMPARE = DEFAULT_RISCV_DV_ROOT / "scripts" / "instr_trace_compare.py"
 CSV_FIELDS = ["pc", "instr", "gpr", "csr", "binary", "mode", "instr_str", "operand", "pad"]
+RUNNABLE_SUFFIXES = (".bin", ".elf", ".o")
+CASE_CONTAINER_DIRS = ("testcases", "asm_test", "directed_asm_test")
 COMPARE_SUMMARY_RE = re.compile(
     r"^\[(?P<status>PASSED|FAILED)\]: (?P<matched>\d+) matched(?:, (?P<mismatch>\d+) mismatch)?$",
     re.MULTILINE,
@@ -65,7 +67,7 @@ class CaseResult:
 
 
 def choose_image(paths: list[Path]) -> Path:
-    for suffix in (".bin", ".elf", ".o"):
+    for suffix in RUNNABLE_SUFFIXES:
         match = next((path for path in paths if path.suffix.lower() == suffix), None)
         if match is not None:
             return match
@@ -84,14 +86,14 @@ def choose_symbol_elf(paths: list[Path], image: Path) -> Path | None:
 
 def discover_flat_cases(suite_root: Path) -> list[Case]:
     search_root = suite_root
-    for candidate in ("testcases", "asm_test", "directed_asm_test"):
+    for candidate in CASE_CONTAINER_DIRS:
         candidate_path = suite_root / candidate
         if candidate_path.is_dir():
             search_root = candidate_path
             break
 
     groups: dict[str, list[Path]] = {}
-    for suffix in (".bin", ".elf", ".o"):
+    for suffix in RUNNABLE_SUFFIXES:
         for path in search_root.rglob(f"*{suffix}"):
             if not path.is_file():
                 continue
@@ -119,7 +121,7 @@ def discover_separated_cases(suite_root: Path) -> list[Case]:
     cases: list[Case] = []
     for case_dir in sorted(path for path in cases_root.iterdir() if path.is_dir()):
         artifacts = sorted(
-            path for path in case_dir.iterdir() if path.is_file() and path.suffix.lower() in (".bin", ".elf", ".o")
+            path for path in case_dir.iterdir() if path.is_file() and path.suffix.lower() in RUNNABLE_SUFFIXES
         )
         if not artifacts:
             continue
@@ -143,6 +145,78 @@ def discover_cases(suite_root: Path) -> list[Case]:
         if cases:
             return cases
     return discover_flat_cases(suite_root)
+
+
+def has_runnable_artifact(root: Path) -> bool:
+    if not root.is_dir():
+        return False
+    for suffix in RUNNABLE_SUFFIXES:
+        if any(path.is_file() for path in root.rglob(f"*{suffix}")):
+            return True
+    return False
+
+
+def has_direct_runnable_artifact(root: Path) -> bool:
+    if not root.is_dir():
+        return False
+    return any(path.is_file() and path.suffix.lower() in RUNNABLE_SUFFIXES for path in root.iterdir())
+
+
+def is_structured_suite_root(root: Path) -> bool:
+    return any((root / container).is_dir() and has_runnable_artifact(root / container) for container in CASE_CONTAINER_DIRS)
+
+
+def discover_suite_roots(input_root: Path) -> list[Path]:
+    if is_structured_suite_root(input_root) or has_direct_runnable_artifact(input_root):
+        return [input_root]
+
+    suite_roots: list[Path] = []
+    seen: set[Path] = set()
+    for container in CASE_CONTAINER_DIRS:
+        for container_root in input_root.rglob(container):
+            if not container_root.is_dir() or not has_runnable_artifact(container_root):
+                continue
+            suite_root = container_root.parent
+            if suite_root in seen:
+                continue
+            seen.add(suite_root)
+            suite_roots.append(suite_root)
+
+    if suite_roots:
+        return sorted(suite_roots)
+
+    # Preserve the previous loose behavior for unusual flat output layouts.
+    if discover_flat_cases(input_root):
+        return [input_root]
+    return []
+
+
+def prefix_case(case: Case, prefix: str) -> Case:
+    if not prefix:
+        return case
+    return Case(
+        name=f"{prefix}/{case.name}",
+        image=case.image,
+        symbol_elf=case.symbol_elf,
+        spike_log=case.spike_log,
+    )
+
+
+def discover_input_cases(input_root: Path) -> tuple[list[Case], list[Path]]:
+    suite_roots = discover_suite_roots(input_root)
+    multi_suite_input = len(suite_roots) > 1 or (len(suite_roots) == 1 and suite_roots[0] != input_root)
+    cases: list[Case] = []
+
+    for suite_root in suite_roots:
+        prefix = ""
+        if multi_suite_input:
+            try:
+                prefix = str(suite_root.relative_to(input_root))
+            except ValueError:
+                prefix = suite_root.name
+        cases.extend(prefix_case(case, prefix) for case in discover_cases(suite_root))
+
+    return cases, suite_roots
 
 
 def ensure_built(sim_bin: Path, build_script: Path) -> None:
@@ -485,7 +559,9 @@ def build_compare_report(
 
     spike_entries = load_trace_csv(spike_csv)
     rtl_entries = enrich_trace_entries(load_trace_csv(rtl_csv), spike_entries)
-    compare_samples = collect_compare_samples(spike_entries, rtl_entries)
+    compare_samples = []
+    if summary is None or summary.status != "PASSED":
+        compare_samples = collect_compare_samples(spike_entries, rtl_entries)
 
     report: list[str] = []
     report.append(f"Compare Report: {case.name}")
@@ -635,16 +711,20 @@ def run_case(
     compare_status = "skip"
     compare_summary = "compare disabled"
     compare_log = None
-    if completed.returncode == 0 and compare:
-        try:
-            compare_status, compare_summary, compare_log = compare_case(
-                case=case,
-                case_dir=case_dir,
-                riscv_dv_root=riscv_dv_root,
-            )
-        except (RuntimeError, subprocess.CalledProcessError) as exc:
-            compare_status = "error"
-            compare_summary = str(exc)
+    if compare:
+        if completed.returncode == 0:
+            try:
+                compare_status, compare_summary, compare_log = compare_case(
+                    case=case,
+                    case_dir=case_dir,
+                    riscv_dv_root=riscv_dv_root,
+                )
+            except (RuntimeError, subprocess.CalledProcessError) as exc:
+                compare_status = "error"
+                compare_summary = str(exc)
+        else:
+            compare_status = "notrun"
+            compare_summary = "simulation did not pass; compare not run"
 
     return CaseResult(
         case=case,
@@ -665,13 +745,16 @@ def main() -> int:
             "suite",
             nargs="?",
             default=str(DEFAULT_SUITE),
-            help="riscv-dv output directory, for example ../riscv-dv/verification_output/rv32imc_mmode_directed_suite",
+            help=(
+                "riscv-dv suite directory, or a verification_output root containing multiple suites; "
+                "for example ../riscv-dv/verification_output/rv32imc_mmode_directed_suite"
+            ),
         )
         parser.add_argument("--sim", default=str(DEFAULT_SIM), help="path to the compiled Verilator simulator")
         parser.add_argument("--build-script", default=str(DEFAULT_BUILD), help="path to the simulator build script")
         parser.add_argument("--no-build", action="store_true", help="skip the simulator build step")
         parser.add_argument("--max-cycles", type=int, default=1_000_000, help="timeout passed to the simulator")
-        parser.add_argument("--filter", default="", help="only run cases whose name contains this substring")
+        parser.add_argument("--filter", default="", help="only run cases whose suite-prefixed name contains this substring")
         parser.add_argument(
             "--compare",
             action="store_true",
@@ -685,7 +768,7 @@ def main() -> int:
         parser.add_argument(
             "--work-dir",
             default="",
-            help="directory for logs and compare artifacts (default: sim_verilator/build/riscv_dv/<suite-name>)",
+            help="directory for logs and compare artifacts (default: sim_verilator/build/riscv_dv/<input-name>)",
         )
         parser.add_argument(
             "--sim-arg",
@@ -695,14 +778,14 @@ def main() -> int:
         )
         args = parser.parse_args()
 
-        suite_root = Path(args.suite).resolve()
+        input_root = Path(args.suite).resolve()
         sim_bin = Path(args.sim).resolve()
         build_script = Path(args.build_script).resolve()
         riscv_dv_root = Path(args.riscv_dv_root).resolve()
         work_dir = (
             Path(args.work_dir).resolve()
             if args.work_dir
-            else (SIM_DIR / "build" / "riscv_dv" / suite_root.name).resolve()
+            else (SIM_DIR / "build" / "riscv_dv" / input_root.name).resolve()
         )
 
         if not args.no_build:
@@ -711,20 +794,24 @@ def main() -> int:
         if not sim_bin.exists():
             print(f"error: simulator not found: {sim_bin}", file=sys.stderr)
             return 1
-        if not suite_root.exists():
-            print(f"error: suite directory does not exist: {suite_root}", file=sys.stderr)
+        if not input_root.exists():
+            print(f"error: input directory does not exist: {input_root}", file=sys.stderr)
             return 1
 
-        cases = discover_cases(suite_root)
+        cases, suite_roots = discover_input_cases(input_root)
         if args.filter:
             cases = [case for case in cases if args.filter in case.name]
         if not cases:
-            print(f"error: no runnable .bin/.elf/.o cases found under {suite_root}", file=sys.stderr)
+            print(f"error: no runnable .bin/.elf/.o cases found under {input_root}", file=sys.stderr)
             return 1
 
         work_dir.mkdir(parents=True, exist_ok=True)
         print(colorize(f"Running {len(cases)} riscv-dv case(s) with {sim_bin}", "cyan"))
-        print(f"  suite: {suite_root}")
+        print(f"  input: {input_root}")
+        if len(suite_roots) == 1 and suite_roots[0] == input_root:
+            print(f"  suite: {suite_roots[0]}")
+        else:
+            print(f"  suites: {len(suite_roots)}")
         print(f"  artifacts: {work_dir}")
         if args.compare:
             print(f"  compare: enabled against spike logs from {riscv_dv_root}")
@@ -734,6 +821,7 @@ def main() -> int:
         compare_pass = 0
         compare_fail = 0
         compare_skip = 0
+        compare_notrun = 0
         compare_error = 0
 
         for index, case in enumerate(cases, start=1):
@@ -754,6 +842,7 @@ def main() -> int:
                     "pass": "green",
                     "fail": "red",
                     "skip": "yellow",
+                    "notrun": "yellow",
                     "error": "red",
                 }[result.compare_status]
                 line += " " + colorize(f"CMP-{result.compare_status.upper()}", compare_color)
@@ -777,6 +866,9 @@ def main() -> int:
                 elif result.compare_status == "skip":
                     compare_skip += 1
                     print(f"      {result.compare_summary}")
+                elif result.compare_status == "notrun":
+                    compare_notrun += 1
+                    print(f"      {result.compare_summary}")
                 else:
                     compare_error += 1
                     print(f"      {result.compare_summary}")
@@ -789,7 +881,7 @@ def main() -> int:
         if args.compare:
             compare_summary = (
                 f"Compare summary: {compare_pass} passed, {compare_fail} failed, "
-                f"{compare_skip} skipped, {compare_error} error"
+                f"{compare_skip} skipped, {compare_notrun} not run, {compare_error} error"
             )
             print(colorize(compare_summary, "green" if compare_fail == 0 and compare_error == 0 else "red"))
 
