@@ -4,6 +4,7 @@ import chisel3._
 import chisel3.util._
 import utils._
 import chisel3.util.HasBlackBoxInline
+import cl1.Cl1Config._
 
 class rf_ram(val WordDepth:Int = 256, val DW:Int = 1) extends Module {
     val io   = IO(new Bundle {
@@ -42,7 +43,7 @@ class Cl1DCACHE extends Module {
         val AW    = 32
         val DW    = 32
         val ROWW  = log2Ceil(DW/8 * BANKS)
-        val IDXW  = 7
+        val IDXW  = FORMAL_CACHE_IDXW
         val TAGW  = AW - IDXW - ROWW
     }
 
@@ -234,6 +235,7 @@ class Cl1DCACHE extends Module {
 
     val req_addr_reg  = RegEnable(io.in.req.bits.addr, 0.U, io.in.req.fire)
     val req_size_reg  = RegEnable(io.in.req.bits.size, 0.U, io.in.req.fire)
+    val req_mask_reg  = RegEnable(io.in.req.bits.mask, 0.U, io.in.req.fire)
 
     val read_req      = ! io.in.req.bits.wen
     val dc_ofst       = io.in.req.bits.addr(CacheParams.ROWW-1, 2)
@@ -410,7 +412,7 @@ class Cl1DCACHE extends Module {
     ))
     io.out.req.bits.wen     := s_is_miss | s_is_wr_dirtyline
     io.out.req.bits.burst   := burst_trans | s_is_wr_dirtyline
-    io.out.req.bits.mask    := Mux(dcacheable  | s_is_wr_dirtyline, Fill(CacheParams.DW/8, true.B), wdat_mask_r)
+    io.out.req.bits.mask    := Mux(dcacheable  | s_is_wr_dirtyline, Fill(CacheParams.DW/8, true.B), req_mask_reg)
     io.out.req.bits.len     := Mux(burst_trans | s_is_wr_dirtyline, (CacheParams.BANKS - 1).U, 0.U)
     io.out.req.bits.size    := Mux(burst_trans | s_is_wr_dirtyline, "b10".U, req_size_reg)
     io.out.req.bits.last    := Mux1H(Seq(
