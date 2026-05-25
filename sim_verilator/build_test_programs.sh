@@ -5,7 +5,8 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ROOT_DIR=$(cd -- "${SCRIPT_DIR}/.." && pwd)
 SELFTEST_DIR="${SCRIPT_DIR}/selftest"
 BUILD_DIR="${SELFTEST_DIR}/build"
-PASS_DIR="${BUILD_DIR}/pass_cases"
+CORE_CASE_DIR="${BUILD_DIR}/core_cases"
+HARNESS_CASE_DIR="${BUILD_DIR}/harness_cases"
 NEG_DIR="${BUILD_DIR}/negative_cases"
 NIX_HELPER="${SCRIPT_DIR}/nix_env.sh"
 
@@ -70,41 +71,103 @@ link_test() {
   bin_to_hex "${bin}" "${hex}"
 }
 
-stage_cases() {
-  rm -rf "${PASS_DIR}" "${NEG_DIR}"
-  mkdir -p "${PASS_DIR}" "${NEG_DIR}"
+artifact_name() {
+  local src="$1"
+  local file="${src##*/}"
+  printf '%s\n' "${file%.*}"
+}
 
-  for name in host_exit_pass tohost_pass ebreak_pass custom_mmio_pass illegal_instruction_pass access_fault_pass config_region_pass; do
-    for ext in elf bin hex map dis; do
-      ln -sf "../${name}.${ext}" "${PASS_DIR}/${name}.${ext}"
-    done
+discover_sources() {
+  local dir
+  for dir in "${SELFTEST_DIR}/core" "${SELFTEST_DIR}/harness" "${SELFTEST_DIR}/negative"; do
+    if [[ -d "${dir}" ]]; then
+      find "${dir}" -maxdepth 1 -type f \( -name '*.c' -o -name '*.S' -o -name '*.s' \) -print0
+    fi
   done
+}
 
-  for name in host_exit_fail; do
+case_group_for_source() {
+  local src="$1"
+  local rel="${src#${SELFTEST_DIR}/}"
+  local name
+  name=$(artifact_name "${src}")
+
+  if [[ "${rel}" == negative/* || "${name}" == *_fail ]]; then
+    printf '%s\n' negative
+  elif [[ "${rel}" == core/* ]]; then
+    printf '%s\n' core
+  elif [[ "${rel}" == harness/* ]]; then
+    printf '%s\n' harness
+  else
+    echo "error: cannot classify selftest source: ${src}" >&2
+    return 1
+  fi
+}
+
+case_dir_for_group() {
+  local group="$1"
+  case "${group}" in
+    core) printf '%s\n' "${CORE_CASE_DIR}" ;;
+    harness) printf '%s\n' "${HARNESS_CASE_DIR}" ;;
+    negative) printf '%s\n' "${NEG_DIR}" ;;
+    *)
+      echo "error: unknown selftest group: ${group}" >&2
+      return 1
+      ;;
+  esac
+}
+
+stage_cases() {
+  local -a sources=("$@")
+  local src name group dst ext
+
+  rm -rf "${CORE_CASE_DIR}" "${HARNESS_CASE_DIR}" "${NEG_DIR}"
+  mkdir -p "${CORE_CASE_DIR}" "${HARNESS_CASE_DIR}" "${NEG_DIR}"
+
+  for src in "${sources[@]}"; do
+    name=$(artifact_name "${src}")
+    group=$(case_group_for_source "${src}")
+    dst=$(case_dir_for_group "${group}")
     for ext in elf bin hex map dis; do
-      ln -sf "../${name}.${ext}" "${NEG_DIR}/${name}.${ext}"
+      ln -sf "../${name}.${ext}" "${dst}/${name}.${ext}"
     done
   done
 }
 
 main() {
+  local -a sources=()
+  local src name
+  declare -A seen_names=()
+
   maybe_source_nix_env
 
   mkdir -p "${BUILD_DIR}"
 
-  link_test "host_exit_pass" "${SELFTEST_DIR}/host_exit_pass.c"
-  link_test "host_exit_fail" "${SELFTEST_DIR}/host_exit_fail.c"
-  link_test "tohost_pass" "${SELFTEST_DIR}/tohost_pass.c"
-  link_test "ebreak_pass" "${SELFTEST_DIR}/ebreak_pass.c"
-  link_test "custom_mmio_pass" "${SELFTEST_DIR}/custom_mmio_pass.c"
-  link_test "illegal_instruction_pass" "${SELFTEST_DIR}/illegal_instruction_pass.S"
-  link_test "access_fault_pass" "${SELFTEST_DIR}/access_fault_pass.S"
-  link_test "config_region_pass" "${SELFTEST_DIR}/config_region_pass.S"
-  link_test "interrupt_external_pass" "${SELFTEST_DIR}/interrupt_external_pass.S"
-  link_test "interrupt_software_pass" "${SELFTEST_DIR}/interrupt_software_pass.S"
-  link_test "interrupt_timer_pass" "${SELFTEST_DIR}/interrupt_timer_pass.S"
+  while IFS= read -r -d '' src; do
+    sources+=("${src}")
+  done < <(discover_sources | sort -z)
 
-  stage_cases
+  if ((${#sources[@]} == 0)); then
+    echo "error: no selftest sources found under ${SELFTEST_DIR}/{core,harness,negative}" >&2
+    return 1
+  fi
+
+  for src in "${sources[@]}"; do
+    name=$(artifact_name "${src}")
+    if [[ -n "${seen_names[${name}]:-}" ]]; then
+      echo "error: duplicate selftest artifact name '${name}':" >&2
+      echo "  ${seen_names[${name}]}" >&2
+      echo "  ${src}" >&2
+      return 1
+    fi
+    seen_names["${name}"]="${src}"
+  done
+
+  for src in "${sources[@]}"; do
+    link_test "$(artifact_name "${src}")" "${src}"
+  done
+
+  stage_cases "${sources[@]}"
   echo "[selftest] artifacts ready under ${BUILD_DIR}"
 }
 

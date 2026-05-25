@@ -2,34 +2,38 @@ SHELL := /usr/bin/env bash
 
 SCRIPT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 ROOT_DIR := $(abspath $(SCRIPT_DIR)/..)
-SIM_BIN := $(SCRIPT_DIR)/build/cl1_verilator
+CL1_TEST_MODE ?= bus
+CL1_SIM := $(SCRIPT_DIR)/cl1_sim.py
 TESTS ?= $(SCRIPT_DIR)/../tests
 RVDV_ARGS ?=
+SIM_ARGS ?=
 
-.PHONY: build selftest run test regression riscv-dv clean
+.PHONY: build selftest run test regression check riscv-dv clean
 
 build:
-	$(SCRIPT_DIR)/build.sh
+	$(CL1_SIM) build --mode $(CL1_TEST_MODE)
 
 selftest:
-	$(SCRIPT_DIR)/build_test_programs.sh
+	$(CL1_SIM) selftest --mode $(CL1_TEST_MODE)
 
-run: build
+run:
 	@if [ -z "$(IMAGE)" ]; then \
 		echo "Usage: make -C sim_verilator run IMAGE=/path/to/test.bin [SIM_ARGS='...']" >&2; \
 		exit 1; \
 	fi
-	$(SIM_BIN) $(SIM_ARGS) $(IMAGE)
+	cd $(ROOT_DIR) && $(CL1_SIM) run --mode $(CL1_TEST_MODE) -- $(SIM_ARGS) $(IMAGE)
 
-test: build
-	$(SCRIPT_DIR)/run_tests.py $(TESTS)
+test:
+	$(CL1_SIM) test --mode $(CL1_TEST_MODE) $(TESTS)
 
-regression: build selftest
-	$(SCRIPT_DIR)/regression.py --suite $(if $(SUITE),$(SUITE),smoke)
+regression:
+	$(CL1_SIM) regression --mode $(CL1_TEST_MODE) --suite $(if $(SUITE),$(SUITE),smoke)
 
-riscv-dv: build
-	cd $(ROOT_DIR) && $(SCRIPT_DIR)/run_riscv_dv.py $(if $(SUITE),$(SUITE),) $(RVDV_ARGS)
+check:
+	$(CL1_SIM) check --mode $(CL1_TEST_MODE) --level $(if $(LEVEL),$(LEVEL),full)
+
+riscv-dv:
+	$(CL1_SIM) riscv-dv --mode $(CL1_TEST_MODE) $(RVDV_ARGS) $(if $(SUITE),$(SUITE),)
 
 clean:
-	rm -rf $(SCRIPT_DIR)/build
-	rm -rf $(SCRIPT_DIR)/selftest/build
+	$(CL1_SIM) clean

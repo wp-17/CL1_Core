@@ -1,7 +1,9 @@
 .section .text
 .globl main
 
-.equ HOST_EXIT_ADDR, 0x10000004
+#include "address_map.h"
+
+.equ HOST_EXIT_ADDR, CL1_DEFAULT_HOST_EXIT_ADDR
 .equ ILLEGAL_ADDR,  0x60000000
 
 main:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import time
@@ -10,8 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from platforms import active_platform
+
 SIM_DIR = Path(__file__).resolve().parent
-DEFAULT_SIM = SIM_DIR / "build" / "cl1_verilator"
+DEFAULT_TEST_MODE = os.environ.get("CL1_TEST_MODE", "bus").strip().lower() or "bus"
+DEFAULT_SIM = SIM_DIR / "build" / DEFAULT_TEST_MODE / "cl1_verilator"
 DEFAULT_BUILD = SIM_DIR / "build.sh"
 SUPPORTED_EXTS = (".elf", ".bin", ".hex")
 EXT_BY_NAME = {"elf": ".elf", "bin": ".bin", "hex": ".hex"}
@@ -66,15 +70,31 @@ def discover_tests(root: Path, prefer_image_type: str) -> list[TestCase]:
     return cases
 
 
-def ensure_built(sim_bin: Path, build_script: Path) -> None:
-    subprocess.run([str(build_script)], check=True)
+def ensure_built(sim_bin: Path, build_script: Path, test_mode: str, platform_name: str) -> None:
+    env = os.environ.copy()
+    env["CL1_TEST_MODE"] = test_mode
+    env["CL1_PLATFORM"] = platform_name
+    env["CL1_ADDRESS_PROFILE"] = platform_name
+    subprocess.run([str(build_script)], check=True, env=env)
     if not sim_bin.exists():
         raise RuntimeError(f"simulator was not produced: {sim_bin}")
 
 
 def one_line_summary(output: str) -> str:
     lines = [line.strip() for line in output.splitlines() if line.strip()]
-    return lines[-1] if lines else "(no simulator output)"
+    if not lines:
+        return "(no simulator output)"
+
+    sim_verdicts = ("[sim] PASS", "[sim] FAIL", "[sim] TIMEOUT", "[sim] LOAD-ERROR")
+    for line in reversed(lines):
+        if line.startswith(sim_verdicts):
+            return line
+
+    for line in reversed(lines):
+        if line.startswith("[guest]"):
+            return line
+
+    return lines[-1]
 
 
 def run_case(
@@ -82,24 +102,23 @@ def run_case(
     sim_bin: Path,
     logs_dir: Path,
     max_cycles: int,
-    load_addr: str,
     extra_sim_args: Iterable[str],
 ) -> tuple[bool, float, str, Path]:
-    cmd = [str(sim_bin), "--max-cycles", str(max_cycles), "--load-addr", load_addr]
+    cmd = [str(sim_bin), "--max-cycles", str(max_cycles)]
     if case.symbol_elf is not None and case.symbol_elf != case.image:
         cmd.extend(["--symbol-elf", str(case.symbol_elf)])
     cmd.extend(extra_sim_args)
     cmd.append(str(case.image))
 
     start = time.perf_counter()
-    completed = subprocess.run(cmd, capture_output=True, text=True)
+    completed = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     elapsed = time.perf_counter() - start
 
     log_path = logs_dir / f"{case.name.replace('/', '__')}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text(completed.stdout + completed.stderr)
+    output = completed.stdout or ""
+    log_path.write_text(output)
 
-    output = completed.stdout + completed.stderr
     summary = one_line_summary(output)
     return completed.returncode == 0, elapsed, summary, log_path
 
@@ -110,9 +129,17 @@ def main() -> int:
         parser.add_argument("tests_dir", nargs="?", default="tests", help="directory containing .elf/.bin/.hex tests")
         parser.add_argument("--sim", default=str(DEFAULT_SIM), help="path to the compiled Verilator simulator")
         parser.add_argument("--build-script", default=str(DEFAULT_BUILD), help="path to the simulator build script")
+        parser.add_argument("--test-mode", choices=("bus", "cache"), default=DEFAULT_TEST_MODE)
         parser.add_argument("--no-build", action="store_true", help="skip the build step")
         parser.add_argument("--max-cycles", type=int, default=1_000_000, help="timeout passed to the simulator")
-        parser.add_argument("--load-addr", default="0x80000000", help="base address for BIN/HEX images")
+        parser.add_argument(
+            "--address-profile",
+            "--platform",
+            dest="platform",
+            default="",
+            help="CL1 platform: simple_soc or full_soc",
+        )
+        parser.add_argument("--load-addr", default="", help="base address for BIN/HEX images")
         parser.add_argument(
             "--prefer-image-type",
             choices=("elf", "bin", "hex"),
@@ -127,14 +154,18 @@ def main() -> int:
             help="extra argument passed through to the simulator, can be repeated",
         )
         args = parser.parse_args()
+        platform = active_platform(args.platform or None)
+        extra_sim_args = platform.sim_args(load_addr=args.load_addr or None) + args.sim_arg
 
         tests_root = Path(args.tests_dir).resolve()
         sim_bin = Path(args.sim).resolve()
+        if args.sim == str(DEFAULT_SIM):
+            sim_bin = (SIM_DIR / "build" / args.test_mode / "cl1_verilator").resolve()
         build_script = Path(args.build_script).resolve()
-        logs_dir = SIM_DIR / "build" / "test_logs"
+        logs_dir = SIM_DIR / "build" / args.test_mode / "test_logs"
 
         if not args.no_build:
-            ensure_built(sim_bin, build_script)
+            ensure_built(sim_bin, build_script, args.test_mode, platform.name)
 
         if not sim_bin.exists():
             print(f"error: simulator not found: {sim_bin}", file=sys.stderr)
@@ -153,6 +184,7 @@ def main() -> int:
             return 1
 
         print(colorize(f"Running {len(cases)} test(s) with {sim_bin} (prefer {args.prefer_image_type})", "cyan"))
+        print(f"  platform: {platform.name}")
 
         passed = 0
         failed = 0
@@ -162,17 +194,15 @@ def main() -> int:
                 sim_bin=sim_bin,
                 logs_dir=logs_dir,
                 max_cycles=args.max_cycles,
-                load_addr=args.load_addr,
-                extra_sim_args=args.sim_arg,
+                extra_sim_args=extra_sim_args,
             )
 
             status = colorize("PASS", "green") if ok else colorize("FAIL", "red")
-            print(f"[{index:>3}/{len(cases):>3}] {status} {case.name} ({elapsed:.2f}s)")
+            print(f"[{index:>3}/{len(cases):>3}] {status} {case.name} ({elapsed:.2f}s)  {summary}")
             if ok:
                 passed += 1
             else:
                 failed += 1
-                print(f"      {summary}")
                 print(f"      log: {log_path}")
 
         total = passed + failed

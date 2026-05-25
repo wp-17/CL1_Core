@@ -1,15 +1,17 @@
 .section .text
 .globl main
 
-.equ HOST_EXIT_ADDR, 0x10000004
+#include "address_map.h"
+
+.equ HOST_EXIT_ADDR, CL1_DEFAULT_HOST_EXIT_ADDR
 .equ MSTATUS_MIE,   0x00000008
-.equ MIE_MTIE,      0x00000080
-.equ MCAUSE_MTI,    0x80000007
+.equ MIE_MSIE,      0x00000008
+.equ MCAUSE_MSI,    0x80000003
 
 main:
   la t0, interrupt_handler
   csrw mtvec, t0
-  li t0, MIE_MTIE
+  li t0, MIE_MSIE
   csrw mie, t0
   li t0, MSTATUS_MIE
   csrw mstatus, t0
@@ -21,7 +23,7 @@ wait_irq:
 .align 2
 interrupt_handler:
   csrr t0, mcause
-  li t1, MCAUSE_MTI
+  li t1, MCAUSE_MSI
   bne t0, t1, fail
 
   csrr t0, mepc
@@ -35,7 +37,7 @@ pass_loop:
 
 fail:
   li t0, HOST_EXIT_ADDR
-  li t1, 0x63
+  li t1, 0x62
   sw t1, 0(t0)
 
 fail_loop:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import re
 import subprocess
 import sys
@@ -11,9 +12,12 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from platforms import active_platform
+
 ROOT_DIR = Path(__file__).resolve().parent.parent
 SIM_DIR = Path(__file__).resolve().parent
-DEFAULT_SIM = SIM_DIR / "build" / "cl1_verilator"
+DEFAULT_TEST_MODE = os.environ.get("CL1_TEST_MODE", "bus").strip().lower() or "bus"
+DEFAULT_SIM = SIM_DIR / "build" / DEFAULT_TEST_MODE / "cl1_verilator"
 DEFAULT_BUILD = SIM_DIR / "build.sh"
 DEFAULT_RISCV_DV_ROOT = ROOT_DIR.parent / "riscv-dv"
 DEFAULT_SUITE = DEFAULT_RISCV_DV_ROOT / "verification_output" / "rv32imc_mmode_directed_suite"
@@ -219,8 +223,12 @@ def discover_input_cases(input_root: Path) -> tuple[list[Case], list[Path]]:
     return cases, suite_roots
 
 
-def ensure_built(sim_bin: Path, build_script: Path) -> None:
-    subprocess.run([str(build_script)], check=True)
+def ensure_built(sim_bin: Path, build_script: Path, test_mode: str, platform_name: str) -> None:
+    env = os.environ.copy()
+    env["CL1_TEST_MODE"] = test_mode
+    env["CL1_PLATFORM"] = platform_name
+    env["CL1_ADDRESS_PROFILE"] = platform_name
+    subprocess.run([str(build_script)], check=True, env=env)
     if not sim_bin.exists():
         raise RuntimeError(f"simulator was not produced: {sim_bin}")
 
@@ -382,10 +390,73 @@ def truncate_rtl_after_terminal_ecall(
     return rtl_entries
 
 
+def prefix_entries_match(spike_entries: list[TraceEntry], rtl_entries: list[TraceEntry]) -> bool:
+    if len(rtl_entries) > len(spike_entries):
+        return False
+    for spike_entry, rtl_entry in zip(spike_entries, rtl_entries):
+        if spike_entry.pc != rtl_entry.pc:
+            return False
+        if spike_entry.binary != rtl_entry.binary:
+            return False
+        if spike_entry.gpr != rtl_entry.gpr:
+            return False
+        if spike_entry.csr != rtl_entry.csr:
+            return False
+    return True
+
+
+def state_update_entries(entries: list[TraceEntry]) -> list[TraceEntry]:
+    return [entry for entry in entries if entry.gpr]
+
+
+def state_update_prefix_matches(spike_entries: list[TraceEntry], rtl_entries: list[TraceEntry]) -> bool:
+    spike_updates = state_update_entries(spike_entries)
+    rtl_updates = state_update_entries(rtl_entries)
+    if len(rtl_updates) > len(spike_updates):
+        return False
+    for spike_entry, rtl_entry in zip(spike_updates, rtl_updates):
+        if spike_entry.pc != rtl_entry.pc:
+            return False
+        if spike_entry.binary != rtl_entry.binary:
+            return False
+        if spike_entry.gpr != rtl_entry.gpr:
+            return False
+    return True
+
+
+def truncate_after_n_state_updates(entries: list[TraceEntry], state_update_count: int) -> list[TraceEntry]:
+    if state_update_count <= 0:
+        return []
+    observed = 0
+    for index, entry in enumerate(entries):
+        if entry.gpr:
+            observed += 1
+            if observed == state_update_count:
+                return entries[: index + 1]
+    return entries
+
+
+def truncate_spike_to_rtl_terminal_store(
+    spike_entries: list[TraceEntry],
+    rtl_entries: list[TraceEntry],
+) -> list[TraceEntry]:
+    if not rtl_entries:
+        return spike_entries
+    if not state_update_prefix_matches(spike_entries, rtl_entries):
+        return spike_entries
+
+    terminal = rtl_entries[-1]
+    opcode = int(terminal.binary[-2:], 16) & 0x7F if len(terminal.binary) >= 2 else 0
+    if opcode == 0x23 and not terminal.gpr and not terminal.csr:
+        return truncate_after_n_state_updates(spike_entries, len(state_update_entries(rtl_entries)))
+    return spike_entries
+
+
 def prepare_compare_csvs(spike_csv: Path, rtl_csv: Path, spike_out: Path, rtl_out: Path) -> tuple[Path, Path]:
     spike_entries = [normalize_platform_gpr(entry) for entry in load_trace_csv(spike_csv)]
     rtl_entries = [normalize_platform_gpr(entry) for entry in load_trace_csv(rtl_csv)]
     rtl_entries = truncate_rtl_after_terminal_ecall(spike_entries, rtl_entries)
+    spike_entries = truncate_spike_to_rtl_terminal_store(spike_entries, rtl_entries)
 
     write_trace_csv(spike_out, spike_entries)
     write_trace_csv(rtl_out, rtl_entries)
@@ -752,6 +823,7 @@ def main() -> int:
         )
         parser.add_argument("--sim", default=str(DEFAULT_SIM), help="path to the compiled Verilator simulator")
         parser.add_argument("--build-script", default=str(DEFAULT_BUILD), help="path to the simulator build script")
+        parser.add_argument("--test-mode", choices=("bus", "cache"), default=DEFAULT_TEST_MODE)
         parser.add_argument("--no-build", action="store_true", help="skip the simulator build step")
         parser.add_argument("--max-cycles", type=int, default=1_000_000, help="timeout passed to the simulator")
         parser.add_argument("--filter", default="", help="only run cases whose suite-prefixed name contains this substring")
@@ -776,20 +848,31 @@ def main() -> int:
             default=[],
             help="extra argument passed through to the simulator, can be repeated",
         )
+        parser.add_argument(
+            "--address-profile",
+            "--platform",
+            dest="platform",
+            default="",
+            help="CL1 platform: simple_soc or full_soc",
+        )
         args = parser.parse_args()
+        platform = active_platform(args.platform or None)
+        extra_sim_args = platform.sim_args() + platform.riscv_dv_sim_args() + args.sim_arg
 
         input_root = Path(args.suite).resolve()
         sim_bin = Path(args.sim).resolve()
+        if args.sim == str(DEFAULT_SIM):
+            sim_bin = (SIM_DIR / "build" / args.test_mode / "cl1_verilator").resolve()
         build_script = Path(args.build_script).resolve()
         riscv_dv_root = Path(args.riscv_dv_root).resolve()
         work_dir = (
             Path(args.work_dir).resolve()
             if args.work_dir
-            else (SIM_DIR / "build" / "riscv_dv" / input_root.name).resolve()
+            else (SIM_DIR / "build" / args.test_mode / "riscv_dv" / input_root.name).resolve()
         )
 
         if not args.no_build:
-            ensure_built(sim_bin, build_script)
+            ensure_built(sim_bin, build_script, args.test_mode, platform.name)
 
         if not sim_bin.exists():
             print(f"error: simulator not found: {sim_bin}", file=sys.stderr)
@@ -813,6 +896,9 @@ def main() -> int:
         else:
             print(f"  suites: {len(suite_roots)}")
         print(f"  artifacts: {work_dir}")
+        print(f"  platform: {platform.name}")
+        if extra_sim_args:
+            print(f"  address sim args: {' '.join(extra_sim_args)}")
         if args.compare:
             print(f"  compare: enabled against spike logs from {riscv_dv_root}")
 
@@ -830,7 +916,7 @@ def main() -> int:
                 sim_bin=sim_bin,
                 work_dir=work_dir,
                 max_cycles=args.max_cycles,
-                extra_sim_args=args.sim_arg,
+                extra_sim_args=extra_sim_args,
                 compare=args.compare,
                 riscv_dv_root=riscv_dv_root,
             )

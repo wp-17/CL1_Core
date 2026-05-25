@@ -1,6 +1,8 @@
 .section .text.init
 .globl _start
 
+#include "address_map.h"
+
 _start:
   la sp, _stack_top
 
@@ -15,7 +17,7 @@ _start:
 2:
   call main
 
-  li t0, 0x10000004
+  li t0, CL1_DEFAULT_HOST_EXIT_ADDR
   sw a0, 0(t0)
 
 3:

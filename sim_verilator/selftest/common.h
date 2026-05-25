@@ -3,8 +3,10 @@
 
 #include <stdint.h>
 
-#define DEFAULT_UART_ADDR 0x10000000u
-#define DEFAULT_HOST_EXIT_ADDR 0x10000004u
+#include "address_map.h"
+
+#define DEFAULT_UART_ADDR CL1_DEFAULT_UART_ADDR
+#define DEFAULT_HOST_EXIT_ADDR CL1_DEFAULT_HOST_EXIT_ADDR
 
 static inline void mmio_write32(uint32_t addr, uint32_t value) {
   *(volatile uint32_t *)addr = value;

@@ -1,6 +1,8 @@
 .section .text
 .globl main
 
+#include "address_map.h"
+
 main:
   la t0, illegal_handler
   csrw mtvec, t0
@@ -45,14 +47,14 @@ handle_illegal_c:
   mret
 
 pass:
-  li t0, 0x10000004
+  li t0, CL1_DEFAULT_HOST_EXIT_ADDR
   sw zero, 0(t0)
 
 pass_loop:
   j pass_loop
 
 fail:
-  li t0, 0x10000004
+  li t0, CL1_DEFAULT_HOST_EXIT_ADDR
   li t1, 0x22
   sw t1, 0(t0)
 
