@@ -39,20 +39,25 @@ object Cl1BuildMode {
 
   val CACHE_MODE: Boolean = TEST_MODE == "cache"
 
-  private val legacyFullSoc = boolValue("CL1_FULL_SOC_TEST", false)
-  private val legacySimpleSoc = boolValue("CL1_SIMPLE_SOC_TEST", true)
+  private val legacyFullSoc = boolValue("CL1_FULL_SOC_TEST", boolValue("CL1_GLOBAL_FULL_SOC_TEST", false))
+  private val legacySimpleSoc = boolValue("CL1_SIMPLE_SOC_TEST", boolValue("CL1_GLOBAL_SIMPLE_SOC_TEST", true))
   val PLATFORM: String = configValue("CL1_PLATFORM")
     .orElse(configValue("CL1_ADDRESS_PROFILE"))
     .map(normalizePlatform)
     .getOrElse(if (legacyFullSoc || !legacySimpleSoc) "full_soc" else "simple_soc")
 
   def bool(name: String, default: Boolean): Boolean = boolValue(name, default)
+
+  def int(name: String, default: Int): Int =
+    configValue(name).map(_.toInt).getOrElse(default)
 }
 
 object globalConfig {
-  val syn = Cl1BuildMode.bool("CL1_SYN", !Cl1BuildMode.CACHE_MODE)
-  val simpleSocTest = Cl1BuildMode.PLATFORM == "simple_soc"
-  val fullSocTest  = Cl1BuildMode.PLATFORM == "full_soc"
+  val syn = Cl1BuildMode.bool("CL1_GLOBAL_SYN", Cl1BuildMode.bool("CL1_SYN", !Cl1BuildMode.CACHE_MODE))
+  private val selectedSimpleSoc = Cl1BuildMode.PLATFORM == "simple_soc"
+  private val selectedFullSoc = Cl1BuildMode.PLATFORM == "full_soc"
+  val simpleSocTest = Cl1BuildMode.bool("CL1_GLOBAL_SIMPLE_SOC_TEST", selectedSimpleSoc)
+  val fullSocTest  = Cl1BuildMode.bool("CL1_GLOBAL_FULL_SOC_TEST", selectedFullSoc)
 }
 
 object Cl1Config {
@@ -79,8 +84,9 @@ object Cl1Config {
   val Technology   = "SMIC110"
 
   val FORMAL_VERIF = true
-  val RISCV_FORMAL_ALTOPS = false
+  val RISCV_FORMAL_ALTOPS = Cl1BuildMode.bool("CL1_RISCV_FORMAL_ALTOPS", true)
   val EXPOSE_CORE_BUS = Cl1BuildMode.bool("CL1_EXPOSE_CORE_BUS", !Cl1BuildMode.CACHE_MODE)
+  val FORMAL_CACHE_IDXW = Cl1BuildMode.int("CL1_FORMAL_CACHE_IDXW", 7)
 
   require(
     !(EXPOSE_CORE_BUS && (HAS_ICACHE || HAS_DCACHE)),

@@ -35,6 +35,7 @@ struct Options {
   RandomIrqConfig random_irq;
   std::string image_type = "auto";
   GuestOutputMode guest_output = GuestOutputMode::kTagged;
+  bool stop_on_ebreak = true;
   bool quiet = false;
   bool verbose = false;
 };

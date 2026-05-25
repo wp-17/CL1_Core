@@ -14,7 +14,7 @@ CL1_PLATFORM ?= simple_soc
 CONFIG_DBG = n
 CONFIG_NETSIM = n
 
-POSTSIM =1
+POSTSIM ?=
 SDF_ON  :=1
 #POSTSIM_PATH = /nfs/share/home/wangpian/cl1/backend/Flow_S110/bes_data/sta/sdf/Cl1Top_V3_2026-01-16_20-38_CTS_MAX_CMAX_SDF_Jan_16_20
 POSTSIM_PATH = /nfs/share/home/wangpian/cl1/backend/Flow_S110/bes_data/sta/sdf/Cl1Top_Vbase2_2026-02-23_20-37_CTS_MAX_CMAX_SAIF_SDF_Feb_23_20
@@ -40,6 +40,7 @@ ifeq ($(strip $(CONFIG_NETSIM)), y)
 endif
 
 ifneq ($(strip $(POSTSIM)),)
+ifneq ($(filter bin run dbg_test,$(MAKECMDGOALS)),)
 	SDF_GZ_FILE := $(wildcard $(POSTSIM_PATH)/Cl1Top*.sdf.gz)
     SDF_OUT_FILE := $(POSTSIM_PATH)/Cl1Top.sdf
     _AUTO_UNZIP_SDF := $(shell \
@@ -55,6 +56,7 @@ ifneq ($(strip $(POSTSIM)),)
         fi \
     )
 endif
+endif
 
 $(shell mkdir -p $(BUILD_DIR))
 $(shell mkdir -p $(WAVE_DIR))
@@ -69,20 +71,38 @@ VCC       ?= vcs
 WAVE      ?= gtkwave
 
 # Phony Targets
-.PHONY: all verilog help reformat checkformat clean run
+.PHONY: all verilog verilog-sim verilog-native verilog-axi-cache help reformat checkformat clean run
 
 # Generate Verilog
 FIRTOOL_VERSION = 1.105.0
 FIRTOOL_PATCH_DIR = $(shell pwd)/patch/firtool
 
-verilog:
-	@echo "Generating Verilog files for CL1_TEST_MODE=$(CL1_TEST_MODE), CL1_PLATFORM=$(CL1_PLATFORM)..."
+verilog-sim:
+	@echo "Generating simulation Verilog files for CL1_TEST_MODE=$(CL1_TEST_MODE), CL1_PLATFORM=$(CL1_PLATFORM)..."
 	$(MKDIR) $(VSRC_DIR)
 	@./patch/update-firtool.sh $(FIRTOOL_VERSION) $(FIRTOOL_PATCH_DIR)
 	CHISEL_FIRTOOL_PATH=$(FIRTOOL_PATCH_DIR)/firtool-$(FIRTOOL_VERSION)/bin \
-	CL1_TEST_MODE=$(CL1_TEST_MODE) CL1_PLATFORM=$(CL1_PLATFORM) $(MILL) -i $(PRJ).runMain Elaborate --target-dir $(VSRC_DIR) --throw-on-first-error
+	CL1_TEST_MODE=$(CL1_TEST_MODE) CL1_PLATFORM=$(CL1_PLATFORM) CL1_RISCV_FORMAL_ALTOPS=false $(MILL) -i $(PRJ).runMain Elaborate --target-dir $(VSRC_DIR) --throw-on-first-error
 	sed -i '/difftest\.sv/d' $(VSRC_DIR)/$(CPUTOP).sv
 	sed -i '/Stat\.v/d' $(VSRC_DIR)/$(CPUTOP).sv
+
+define gen_verilog
+	@echo "Generating Verilog files..."
+	$(MKDIR) $(VSRC_DIR)
+	@./patch/update-firtool.sh $(FIRTOOL_VERSION) $(FIRTOOL_PATCH_DIR)
+	CHISEL_FIRTOOL_PATH=$(FIRTOOL_PATCH_DIR)/firtool-$(FIRTOOL_VERSION)/bin \
+	$(1) $(MILL) -i $(PRJ).runMain Elaborate --target-dir $(VSRC_DIR) --throw-on-first-error
+	sed -i '/difftest\.sv/d' $(VSRC_DIR)/$(2).sv
+	sed -i '/Stat\.v/d' $(VSRC_DIR)/$(2).sv
+endef
+
+verilog: verilog-native
+
+verilog-native:
+	$(call gen_verilog,CL1_TOP_NAME=Cl1Top CL1_EXPOSE_CORE_BUS=true,Cl1Top)
+
+verilog-axi-cache:
+	$(call gen_verilog,CL1_TOP_NAME=Cl1Top_AXI CL1_EXPOSE_CORE_BUS=false CL1_HAS_ICACHE=true CL1_HAS_DCACHE=true CL1_SRAM_FOUNDARY=false CL1_FORMAL_CACHE_IDXW=1,Cl1Top_AXI)
 	
 # Show Help for Elaborate
 help:

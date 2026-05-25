@@ -441,7 +441,7 @@ void Simulator::observe_commit(StopInfo& stop) {
   }
 
   const uint32_t insn = top_->rvfi_insn;
-  if (insn == kEbreakInsn || insn == kCompressedEbreakInsn) {
+  if (options_.stop_on_ebreak && !top_->rvfi_trap && (insn == kEbreakInsn || insn == kCompressedEbreakInsn)) {
     set_ebreak_stop(stop, "ebreak");
   }
 }

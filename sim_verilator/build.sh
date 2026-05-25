@@ -32,7 +32,7 @@ ensure_rtl() {
   echo "[build] generating ${RTL_FILE} for CL1_PLATFORM=${CL1_PLATFORM}"
   (
     cd "${ROOT_DIR}"
-    make verilog VSRC_DIR="${RTL_DIR}" CL1_TEST_MODE="${CL1_TEST_MODE}" CL1_PLATFORM="${CL1_PLATFORM}"
+    make verilog-sim VSRC_DIR="${RTL_DIR}" CL1_TEST_MODE="${CL1_TEST_MODE}" CL1_PLATFORM="${CL1_PLATFORM}"
   )
 }
 

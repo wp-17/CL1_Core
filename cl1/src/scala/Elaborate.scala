@@ -1,4 +1,11 @@
 object Elaborate extends App {
+  private def topName(default: String): String =
+    sys.props.get("CL1_TOP_NAME")
+      .orElse(sys.env.get("CL1_TOP_NAME"))
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .getOrElse(default)
+
   val firtoolOptions = Array(
     "--lowering-options=" + List(
       // make yosys happy
@@ -16,6 +23,13 @@ object Elaborate extends App {
     "--ckg-enable=E",
     "--ckg-output=Q"
   )
-  circt.stage.ChiselStage.emitSystemVerilogFile(new cl1.Cl1Top(), args, firtoolOptions)
+  private val moduleName = topName("Cl1Top")
+  circt.stage.ChiselStage.emitSystemVerilogFile(
+    new cl1.Cl1Top {
+      override def desiredName: String = moduleName
+    },
+    args,
+    firtoolOptions
+  )
 }
   

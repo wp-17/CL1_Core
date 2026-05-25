@@ -4,6 +4,7 @@ import chisel3._
 import chisel3.util._
 import utils._
 import chisel3.util.HasBlackBoxInline
+import cl1.Cl1Config._
 
 class rf_ram(val WordDepth:Int = 256, val DW:Int = 1) extends Module {
     val io   = IO(new Bundle {
@@ -42,7 +43,7 @@ class Cl1DCACHE extends Module {
         val AW    = 32
         val DW    = 32
         val ROWW  = log2Ceil(DW/8 * BANKS)
-        val IDXW  = 7
+        val IDXW  = FORMAL_CACHE_IDXW
         val TAGW  = AW - IDXW - ROWW
     }
 

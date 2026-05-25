@@ -4,6 +4,13 @@ package cl1
 
 import chisel3._
 
+class RVFICSR extends Bundle {
+  val rmask = Output(UInt(32.W))
+  val wmask = Output(UInt(32.W))
+  val rdata = Output(UInt(32.W))
+  val wdata = Output(UInt(32.W))
+}
+
 class RVFI extends Bundle {
   val rvfi_valid     = Output(Bool())
   val rvfi_order     = Output(UInt(64.W))
@@ -26,4 +33,13 @@ class RVFI extends Bundle {
   val rvfi_mem_wmask = Output(UInt(4.W))
   val rvfi_mem_rdata = Output(UInt(32.W))
   val rvfi_mem_wdata = Output(UInt(32.W))
+
+  val rvfi_csr_mstatus  = new RVFICSR
+  val rvfi_csr_mie      = new RVFICSR
+  val rvfi_csr_mip      = new RVFICSR
+  val rvfi_csr_mepc     = new RVFICSR
+  val rvfi_csr_mcause   = new RVFICSR
+  val rvfi_csr_mtvec    = new RVFICSR
+  val rvfi_csr_mscratch = new RVFICSR
+  val rvfi_csr_misa     = new RVFICSR
 }

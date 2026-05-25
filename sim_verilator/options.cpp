@@ -175,6 +175,7 @@ void print_usage(const char* argv0) {
       << "  --trace <path.fst>               Dump an FST waveform\n"
       << "  --commit-log <path>              Dump RVFI commit log lines\n"
       << "  --guest-output <tagged|raw>      Format guest UART output (default: tagged)\n"
+      << "  --no-ebreak-stop                 Do not treat committed ebreak as simulator exit\n"
       << "  --quiet                          Suppress image metadata logs\n"
       << "  --verbose                        Print bus/RVFI activity for debug\n"
       << "  -h, --help                       Show this help\n";
@@ -247,6 +248,8 @@ Options parse_args(int argc, char** argv) {
       } else {
         throw std::runtime_error("bad --guest-output, expected tagged or raw");
       }
+    } else if (arg == "--no-ebreak-stop") {
+      options.stop_on_ebreak = false;
     } else if (arg == "--quiet") {
       options.quiet = true;
     } else if (arg == "--verbose") {

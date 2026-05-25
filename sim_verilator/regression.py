@@ -320,7 +320,13 @@ def core_checks(max_cycles: int) -> list[CheckResult]:
         run_command(
             name="ebreak-exception",
             group="core",
-            cmd=[str(SIM_BIN), "--max-cycles", str(max_cycles), str(artifact("ebreak_exception_pass", "elf"))],
+            cmd=[
+                str(SIM_BIN),
+                "--no-ebreak-stop",
+                "--max-cycles",
+                str(max_cycles),
+                str(artifact("ebreak_exception_pass", "elf")),
+            ],
             must_contain=["PASS", "host exit register write"],
         ),
         run_command(

@@ -4,6 +4,7 @@ import chisel3._
 import chisel3.util._
 import utils._
 import chisel3.util.HasBlackBoxInline
+import cl1.Cl1Config._
 
 class dxReq  extends Bundle {
     val invalid = Output(Bool())
@@ -58,7 +59,7 @@ class Cl1ICACHE extends Module {
         val AW    = 32
         val DW    = 32
         val ROWW  = log2Ceil(DW/8 * BANKS)
-        val IDXW  = 7
+        val IDXW  = FORMAL_CACHE_IDXW
         val TAGW  = AW - IDXW - ROWW
     }
 

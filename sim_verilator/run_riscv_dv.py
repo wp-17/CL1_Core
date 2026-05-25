@@ -858,6 +858,8 @@ def main() -> int:
         args = parser.parse_args()
         platform = active_platform(args.platform or None)
         extra_sim_args = platform.sim_args() + platform.riscv_dv_sim_args() + args.sim_arg
+        if args.compare and "--no-ebreak-stop" not in extra_sim_args:
+            extra_sim_args.append("--no-ebreak-stop")
 
         input_root = Path(args.suite).resolve()
         sim_bin = Path(args.sim).resolve()
