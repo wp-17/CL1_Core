@@ -105,7 +105,7 @@ class Cl1LSU extends Module {
   val wen  = bypReq.bits.memType(3)
 
   io.out.req.bits.addr := addr
-  val d_cached = if(globalConfig.simpleSocTest) SimpleSocMemoryMap.isDCacheable(addr) else MemoryMap.isDCacheable(addr)
+  val d_cached = MemoryMap.isDCacheable(addr)
   io.out.req.bits.cache := d_cached
   // io.out.req.bits.cache := false.B
   // io.out.req.bits.invalid := false.B

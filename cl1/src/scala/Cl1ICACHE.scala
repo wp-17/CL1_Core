@@ -212,7 +212,7 @@ class Cl1ICACHE extends Module {
         s_is_lookup -> ic_hit_data,
         s_is_refill -> io.out.rsp.bits.data
     ))
-    io.in.rsp.bits.err   := false.B
+    io.in.rsp.bits.err   := s_is_refill & io.out.rsp.bits.err
 
     // req to bus
     val burst_start_addr   =  Cat(req_addr_reg(CacheParams.AW-1, CacheParams.ROWW),Fill(CacheParams.ROWW, false.B))
