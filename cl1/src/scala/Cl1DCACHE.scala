@@ -235,7 +235,6 @@ class Cl1DCACHE extends Module {
 
     val req_addr_reg  = RegEnable(io.in.req.bits.addr, 0.U, io.in.req.fire)
     val req_size_reg  = RegEnable(io.in.req.bits.size, 0.U, io.in.req.fire)
-    val req_mask_reg  = RegEnable(io.in.req.bits.mask, 0.U, io.in.req.fire)
 
     val read_req      = ! io.in.req.bits.wen
     val dc_ofst       = io.in.req.bits.addr(CacheParams.ROWW-1, 2)
@@ -251,7 +250,7 @@ class Cl1DCACHE extends Module {
     val cycl1_write   = dc_write_r & cycl1_vld
     val cycl2_write   = wb_is_write
 
-    val rw_conflict  = (cycl1_write && cycl0_read && (io.in.req.bits.addr === req_addr_reg) ||
+    val rw_conflict  = (cycl1_write && cycl0_read && (io.in.req.bits.addr(CacheParams.AW-1, 2) === req_addr_reg(CacheParams.AW-1, 2)) ||
                         cycl2_write && cycl0_read && (dc_ofst === wb_ofst_r)) &
                         dcacheable
 
@@ -382,7 +381,7 @@ class Cl1DCACHE extends Module {
         s_is_lookup -> dc_hit_data,
         s_is_refill -> io.out.rsp.bits.data
     ))
-    io.in.rsp.bits.err   := false.B
+    io.in.rsp.bits.err   := (s_is_waitwrsp | s_is_refill) & io.out.rsp.bits.err
 
     val replace_way_tag = Mux1H(replace_way_r, tagv_srams.map(_.io.dout(CacheParams.TAGW-1,0)))
     val wburst_addr = Cat(replace_way_tag, dc_idx_r, Fill(CacheParams.ROWW, false.B))
@@ -412,7 +411,7 @@ class Cl1DCACHE extends Module {
     ))
     io.out.req.bits.wen     := s_is_miss | s_is_wr_dirtyline
     io.out.req.bits.burst   := burst_trans | s_is_wr_dirtyline
-    io.out.req.bits.mask    := Mux(dcacheable  | s_is_wr_dirtyline, Fill(CacheParams.DW/8, true.B), req_mask_reg)
+    io.out.req.bits.mask    := Mux(dcacheable  | s_is_wr_dirtyline, Fill(CacheParams.DW/8, true.B), wdat_mask_r)
     io.out.req.bits.len     := Mux(burst_trans | s_is_wr_dirtyline, (CacheParams.BANKS - 1).U, 0.U)
     io.out.req.bits.size    := Mux(burst_trans | s_is_wr_dirtyline, "b10".U, req_size_reg)
     io.out.req.bits.last    := Mux1H(Seq(

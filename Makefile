@@ -8,6 +8,8 @@ VSRC_DIR  := ./vsrc
 CPUTOP    := Cl1Top
 DUMP_WAVE :=
 PWR_ANALYSIS :=1
+CL1_TEST_MODE ?= bus
+CL1_PLATFORM ?= simple_soc
 
 CONFIG_DBG = n
 CONFIG_NETSIM = n
@@ -69,11 +71,20 @@ VCC       ?= vcs
 WAVE      ?= gtkwave
 
 # Phony Targets
-.PHONY: all verilog verilog-native verilog-axi-cache help reformat checkformat clean run
+.PHONY: all verilog verilog-sim verilog-native verilog-axi-cache help reformat checkformat clean run
 
 # Generate Verilog
 FIRTOOL_VERSION = 1.105.0
 FIRTOOL_PATCH_DIR = $(shell pwd)/patch/firtool
+
+verilog-sim:
+	@echo "Generating simulation Verilog files for CL1_TEST_MODE=$(CL1_TEST_MODE), CL1_PLATFORM=$(CL1_PLATFORM)..."
+	$(MKDIR) $(VSRC_DIR)
+	@./patch/update-firtool.sh $(FIRTOOL_VERSION) $(FIRTOOL_PATCH_DIR)
+	CHISEL_FIRTOOL_PATH=$(FIRTOOL_PATCH_DIR)/firtool-$(FIRTOOL_VERSION)/bin \
+	CL1_TEST_MODE=$(CL1_TEST_MODE) CL1_PLATFORM=$(CL1_PLATFORM) CL1_RISCV_FORMAL_ALTOPS=false $(MILL) -i $(PRJ).runMain Elaborate --target-dir $(VSRC_DIR) --throw-on-first-error
+	sed -i '/difftest\.sv/d' $(VSRC_DIR)/$(CPUTOP).sv
+	sed -i '/Stat\.v/d' $(VSRC_DIR)/$(CPUTOP).sv
 
 define gen_verilog
 	@echo "Generating Verilog files..."

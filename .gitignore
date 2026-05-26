@@ -17,7 +17,13 @@ saif/
 .bloop/
 .bsp/
 .mill-ammonite/
-.mill-version
+
+# ===== Local development shells =====
+.direnv/
+
+# ===== Python cache =====
+__pycache__/
+*.py[cod]
 
 # ===== Logs / temp =====
 *.log
@@ -42,6 +48,4 @@ patch/firtool/firtool-*/
 Thumbs.db
 .claude/
 .codex
-
-# mill temp files (random 6-char suffix)
-mill.??????
+sim_verilator/.cache/

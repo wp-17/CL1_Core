@@ -31,6 +31,7 @@ class wb2Excp extends Bundle {
     val memNoOutStanding = Input(Bool())
     val excp_valid    = Input(Bool())
     val excp_code     = Input(UInt(8.W))
+    val excp_tval     = Input(UInt(32.W))
 }
 
 class excp2Csr extends Bundle {
@@ -48,6 +49,8 @@ class excp2Csr extends Bundle {
     val cmt_status_en   = Output(Bool())
     val cmt_cause_en    = Output(Bool())
     val cmt_cause_n     = Output(UInt(32.W))
+    val cmt_tval_en     = Output(Bool())
+    val cmt_tval_n      = Output(UInt(32.W))
     val cmt_mret_en     = Output(Bool())
 }
 
@@ -101,6 +104,7 @@ class Cl1EXCP() extends Module with TrapCode {
     val no_outstanding_mem_access = io.wb2Excp.memNoOutStanding
     val excp_valid      = io.wb2Excp.excp_valid
     val excp_code_raw   = io.wb2Excp.excp_code
+    val excp_tval_raw   = io.wb2Excp.excp_tval
 
     val debug_irq_mask  = io.dbg2excp.debug_irq_mask
     val debug_mode      = io.dbg2excp.debug_mode
@@ -111,11 +115,10 @@ class Cl1EXCP() extends Module with TrapCode {
                         tmr_irq & mtie
     val irq_mask    =   ~mie | debug_irq_mask
     val irq_req     =  irq_req_raw & ~irq_mask
-    // MEI > MSI > MTI for simultaneously enabled & pending M-mode interrupts.
     val irq_casue   =  MuxCase(0.U, Seq(
-                        (ext_irq & meie) -> M_EXTER_IRQ,
                         (sft_irq & msie) -> M_SFTER_IRQ,
-                        (tmr_irq & mtie) -> M_TIMER_IRQ
+                        (tmr_irq & mtie) -> M_TIMER_IRQ,
+                        (ext_irq & meie) -> M_EXTER_IRQ
     ))
 
     val excp_take_en    = cmt_ecall | ebrk_excp_en | excp_valid
@@ -132,6 +135,8 @@ class Cl1EXCP() extends Module with TrapCode {
     val cmt_status_en    = trap_take_en
     val cmt_cause_en     = trap_take_en
     val cmt_cause_n      = Mux(excp_take_en, excp_cause, irq_casue)
+    val cmt_tval_en      = trap_take_en
+    val cmt_tval_n       = Mux(excp_valid, excp_tval_raw, 0.U)
     val cmt_mret_en      = cmt_mret
 
     val direct_mode       = (mtvec(1,0) === 0.U)
@@ -181,6 +186,8 @@ class Cl1EXCP() extends Module with TrapCode {
     io.excp2Csr.cmt_status_en := cmt_status_en
     io.excp2Csr.cmt_cause_en  := cmt_cause_en
     io.excp2Csr.cmt_cause_n   := cmt_cause_n
+    io.excp2Csr.cmt_tval_en   := cmt_tval_en
+    io.excp2Csr.cmt_tval_n    := cmt_tval_n
     io.excp2Csr.cmt_mret_en   := cmt_mret_en
 
     io.flush               := flush

@@ -143,7 +143,7 @@ class FetchAlign extends Module {
     memReq.bits.data         := 0.U
     memReq.bits.mask         := 0.U
     // memReq.bits.cache        := (bus_fetch_addr(31) === 1.U)
-    val i_cached                 = if(globalConfig.simpleSocTest) SimpleSocMemoryMap.isICacheable(bus_fetch_addr) else  MemoryMap.isICacheable(bus_fetch_addr)
+    val i_cached                 = MemoryMap.isICacheable(bus_fetch_addr)
     memReq.bits.cache        := i_cached
 
     memResp.ready            := bus_rsp_rdy

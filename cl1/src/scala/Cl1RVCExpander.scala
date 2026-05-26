@@ -152,18 +152,20 @@ class RVCDecoder(x: UInt, xLen: Int, fLen: Int, useAddiForMv: Boolean = false) {
   def q1_ill = {
     def rd0 = if (xLen == 32) false.B else rd === 0.U
     def immz = !(x(12) | x(6, 2).orR)
+    def rv32_shift_shamt5 = if (xLen == 32) x(12) && x(11, 10) <= 1.U else false.B
     def arith_res = x(12, 10).andR && (if (xLen == 32) true.B else x(6) === 1.U)
-    Seq(false.B, rd0, false.B, immz, arith_res, false.B, false.B, false.B)
+    Seq(false.B, rd0, false.B, immz, rv32_shift_shamt5 || arith_res, false.B, false.B, false.B)
   }
 
   def q2_ill = {
+    def rv32_slli_shamt5 = if (xLen == 32) x(12) else false.B
     def fldsp = if (fLen >= 64) false.B else true.B
     def rd0 = rd === 0.U
     def flwsp = if (xLen == 64) rd0 else if (fLen >= 32) false.B else true.B
     def jr_res = !(x(12 ,2).orR)
     def fsdsp = if (fLen >= 64) false.B else true.B
     def fswsp32 = if (xLen == 64) false.B else if (fLen >= 32) false.B else true.B
-    Seq(false.B, fldsp, rd0, flwsp, jr_res, fsdsp, false.B, fswsp32)
+    Seq(rv32_slli_shamt5, fldsp, rd0, flwsp, jr_res, fsdsp, false.B, fswsp32)
   }
   def q3_ill = Seq.fill(8)(true.B)
 

@@ -2,37 +2,68 @@
 
 package cl1
 
-private object ConfigOverrides {
-  private def get(name: String): Option[String] =
-    sys.props.get(name).orElse(sys.env.get(name))
+object Cl1BuildMode {
+  private def configValue(name: String): Option[String] = {
+    sys.props.get(name).orElse(sys.env.get(name)).map(_.trim).filter(_.nonEmpty)
+  }
 
-  def bool(name: String, default: Boolean): Boolean = {
-    get(name).map(_.trim.toLowerCase) match {
-      case None => default
-      case Some("1" | "true" | "yes" | "y" | "on") => true
-      case Some("0" | "false" | "no" | "n" | "off") => false
+  private def boolValue(name: String, default: Boolean): Boolean = {
+    configValue(name) match {
       case Some(value) =>
-        throw new IllegalArgumentException(s"$name must be a boolean value, got '$value'")
+        value.toLowerCase match {
+          case "1" | "true" | "yes" | "y" | "on"  => true
+          case "0" | "false" | "no" | "n" | "off" => false
+          case other => throw new IllegalArgumentException(s"$name must be boolean, got '$other'")
+        }
+      case None => default
     }
   }
 
+  private def normalizePlatform(value: String): String = {
+    value.toLowerCase.replace("-", "_") match {
+      case "simple" | "simple_soc" => "simple_soc"
+      case "full" | "full_soc" => "full_soc"
+      case other => throw new IllegalArgumentException(s"CL1_PLATFORM must be simple_soc or full_soc, got '$other'")
+    }
+  }
+
+  val TEST_MODE: String = configValue("cl1.testMode")
+    .orElse(configValue("CL1_TEST_MODE"))
+    .getOrElse("bus")
+    .toLowerCase
+
+  require(
+    TEST_MODE == "bus" || TEST_MODE == "cache",
+    s"CL1_TEST_MODE must be 'bus' or 'cache', got '$TEST_MODE'"
+  )
+
+  val CACHE_MODE: Boolean = TEST_MODE == "cache"
+
+  private val legacyFullSoc = boolValue("CL1_FULL_SOC_TEST", boolValue("CL1_GLOBAL_FULL_SOC_TEST", false))
+  private val legacySimpleSoc = boolValue("CL1_SIMPLE_SOC_TEST", boolValue("CL1_GLOBAL_SIMPLE_SOC_TEST", true))
+  val PLATFORM: String = configValue("CL1_PLATFORM")
+    .orElse(configValue("CL1_ADDRESS_PROFILE"))
+    .map(normalizePlatform)
+    .getOrElse(if (legacyFullSoc || !legacySimpleSoc) "full_soc" else "simple_soc")
+
+  def bool(name: String, default: Boolean): Boolean = boolValue(name, default)
+
   def int(name: String, default: Int): Int =
-    get(name).map(_.trim).filter(_.nonEmpty).map(_.toInt).getOrElse(default)
+    configValue(name).map(_.toInt).getOrElse(default)
 }
 
 object globalConfig {
-  val syn = ConfigOverrides.bool("CL1_GLOBAL_SYN", true)
-  val simpleSocTest = ConfigOverrides.bool("CL1_GLOBAL_SIMPLE_SOC_TEST", true)
-  val fullSocTest  = ConfigOverrides.bool("CL1_GLOBAL_FULL_SOC_TEST", false)
-  // require (
-  //   Seq(syn, simpleSocTest, fullSocTest).count(_ == true) == 1, 
-  //   "Error: Exactly one of 'syn', 'smipleSocTest', or 'fullSocTest' must be set to true in globalConfig."
-  // )
+  val syn = Cl1BuildMode.bool("CL1_GLOBAL_SYN", Cl1BuildMode.bool("CL1_SYN", !Cl1BuildMode.CACHE_MODE))
+  private val selectedSimpleSoc = Cl1BuildMode.PLATFORM == "simple_soc"
+  private val selectedFullSoc = Cl1BuildMode.PLATFORM == "full_soc"
+  val simpleSocTest = Cl1BuildMode.bool("CL1_GLOBAL_SIMPLE_SOC_TEST", selectedSimpleSoc)
+  val fullSocTest  = Cl1BuildMode.bool("CL1_GLOBAL_FULL_SOC_TEST", selectedFullSoc)
 }
 
 object Cl1Config {
-  val BOOT_ADDR  = if(globalConfig.fullSocTest) "h01000000" else "h80000000"
-  val TVEC_ADDR  = "h20000000"
+  private val platform = PlatformAddressMaps.selected
+  val BOOT_ADDR  = platform.bootAddrLiteral
+  val TVEC_ADDR  = platform.trapVectorLiteral
   val BUS_WIDTH  = 32
   val CKG_EN     = false
   val difftest   = if(globalConfig.simpleSocTest) false else false
@@ -40,19 +71,27 @@ object Cl1Config {
   val DBG_EXCP_BASE = "h800"
   val MDU_SHAERALU = false
   val WB_PIPESTAGE = true
-  val HAS_ICACHE   = ConfigOverrides.bool("CL1_HAS_ICACHE", false)
-  val HAS_DCACHE   = ConfigOverrides.bool("CL1_HAS_DCACHE", false)
+  val HAS_ICACHE   = Cl1BuildMode.bool("CL1_HAS_ICACHE", Cl1BuildMode.CACHE_MODE)
+  val HAS_DCACHE   = Cl1BuildMode.bool("CL1_HAS_DCACHE", Cl1BuildMode.CACHE_MODE)
   val RST_ACTIVELOW = true
   val RST_ASYNC     = true
   val SOC_DIFF     = if(globalConfig.fullSocTest) true else false
-  val SramFoundary = ConfigOverrides.bool("CL1_SRAM_FOUNDARY", if(globalConfig.syn || globalConfig.fullSocTest) true else false)
+  val SramFoundary = Cl1BuildMode.bool(
+    "CL1_SRAM_FOUNDARY",
+    if (Cl1BuildMode.CACHE_MODE) false else globalConfig.syn || globalConfig.fullSocTest
+  )
   val SOC_D64      = if(globalConfig.fullSocTest) true else false
   val Technology   = "SMIC110"
 
   val FORMAL_VERIF = true
-  val RISCV_FORMAL_ALTOPS = true
-  val EXPOSE_CORE_BUS = ConfigOverrides.bool("CL1_EXPOSE_CORE_BUS", true)  // When true, expose CoreBus (fetch + mem) instead of AXI4 at top level
-  val FORMAL_CACHE_IDXW = ConfigOverrides.int("CL1_FORMAL_CACHE_IDXW", 7)
+  val RISCV_FORMAL_ALTOPS = Cl1BuildMode.bool("CL1_RISCV_FORMAL_ALTOPS", true)
+  val EXPOSE_CORE_BUS = Cl1BuildMode.bool("CL1_EXPOSE_CORE_BUS", !Cl1BuildMode.CACHE_MODE)
+  val FORMAL_CACHE_IDXW = Cl1BuildMode.int("CL1_FORMAL_CACHE_IDXW", 7)
+
+  require(
+    !(EXPOSE_CORE_BUS && (HAS_ICACHE || HAS_DCACHE)),
+    "cache instances are unreachable when EXPOSE_CORE_BUS=true; use CL1_TEST_MODE=cache or disable caches"
+  )
 }
 
 object Cl1PowerSaveConfig {

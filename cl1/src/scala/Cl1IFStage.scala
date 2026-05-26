@@ -10,6 +10,7 @@ class IF2IDEXSignal extends Bundle {
   val prdt_taken      = Output(UInt(32.W))
   val cInst           = Output(UInt(16.W))
   val isCInst         = Output(Bool())
+  val rvcIllegal      = Output(Bool())
   val ifu_fetch_err   = Output(Bool())
   val muldiv_b2b      = Output(Bool())
 }
@@ -139,6 +140,7 @@ class Cl1IFStage extends Module {
   val rvcexpander   = Module(new Cl1RVCExpander())
   rvcexpander.io.inst  := Mux(is_c, c_inst, 0.U)
   val expand_inst      = rvcexpander.io.out
+  val rvc_illegal_r    = RegEnable(is_c && rvcexpander.io.illegal, false.B, ir_vld_set)
 
   val ir_n          = Mux(is_c, expand_inst, fetch_inst)
   val ir_en         = ir_vld_set
@@ -192,6 +194,7 @@ class Cl1IFStage extends Module {
   io.pplOut.bits.prdt_taken   := prdt_taken
   io.pplOut.bits.cInst        := cinst_r
   io.pplOut.bits.isCInst      := isC_r
+  io.pplOut.bits.rvcIllegal   := rvc_illegal_r
   io.pplOut.bits.ifu_fetch_err := fetch_err_r
   io.pplOut.bits.muldiv_b2b   := muldiv_b2b_r
 
@@ -220,4 +223,3 @@ class Cl1IFStage extends Module {
   ifu_halt_ack         := RegEnable(ifu_halt_ack_n, false.B, ifu_halt_ack_en)
   io.ifu_halt_ack      := ifu_halt_ack
 }
-

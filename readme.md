@@ -56,10 +56,10 @@ cl1_core/
 | 配置项 | 当前值 | 描述 |
 |--------|--------|------|
 | `syn` | `true` | 综合相关配置开关，会影响 `SramFoundary` 等派生选项。 |
-| `simpleSocTest` | `true` | 选择 simple SoC 测试场景，影响取指/访存地址映射判断。 |
-| `fullSocTest` | `false` | 选择 full SoC 场景；开启后会同时影响启动地址、差分接口和 AXI 位宽。 |
+| `simpleSocTest` | `true` | 由 `CL1_PLATFORM=simple_soc` 派生，选择 simple SoC 测试场景。 |
+| `fullSocTest` | `false` | 由 `CL1_PLATFORM=full_soc` 派生；开启后会同时影响启动地址、差分接口和 AXI 位宽。 |
 
-说明：源码中原本希望 `syn`、`simpleSocTest`、`fullSocTest` 三者“有且仅有一个为 `true`”，但当前 `require` 检查被注释掉了，因此仓库当前状态是 `syn=true` 且 `simpleSocTest=true`。
+说明：`simpleSocTest` 和 `fullSocTest` 不再手工独立配置，统一由 `CL1_PLATFORM` 选择。
 
 ### Cl1Config
 
@@ -74,16 +74,35 @@ cl1_core/
 | `DBG_EXCP_BASE` | `0x800` | Debug 异常入口基地址。 |
 | `MDU_SHAERALU` | `false` | MDU 是否与 ALU 共享部分数据通路。 |
 | `WB_PIPESTAGE` | `true` | 是否保留独立 WB 级；关闭后 ID/EX 直接连到 WB。 |
-| `HAS_ICACHE` | `false` | 是否实例化 ICache；关闭时 IF 侧通过桥接模块直接接入总线。 |
-| `HAS_DCACHE` | `false` | 是否实例化 DCache；关闭时 LSU 通过桥接模块直接接入总线。 |
+| `HAS_ICACHE` | `false` in `bus`, `true` in `cache` | 是否实例化 ICache；由 `CL1_TEST_MODE` 默认选择。 |
+| `HAS_DCACHE` | `false` in `bus`, `true` in `cache` | 是否实例化 DCache；由 `CL1_TEST_MODE` 默认选择。 |
 | `RST_ACTIVELOW` | `true` | 顶层复位信号低有效。 |
 | `RST_ASYNC` | `true` | 顶层内部使用异步复位。 |
 | `SOC_DIFF` | `false` | 是否导出 SoC 差分测试端口 `diff_o`；当 `fullSocTest=true` 时为 `true`。 |
-| `SramFoundary` | `true` | 是否使用工艺 SRAM 宏；当前由 `syn || fullSocTest` 派生。 |
+| `SramFoundary` | `true` in `bus`, `false` in `cache` | 是否使用工艺 SRAM 宏；cache 仿真默认使用 `SyncReadMem`，避免 Verilator 依赖工艺 SRAM 黑盒。 |
 | `SOC_D64` | `false` | 顶层 AXI 数据位宽是否扩展为 64 位；仅在 `fullSocTest=true` 且未暴露 `CoreBus` 时生效。 |
 | `Technology` | `"SMIC110"` | SRAM 宏选择使用的工艺标识，当前 `utils/SRAM.scala` 里用于选择具体 SRAM 实现。 |
 | `FORMAL_VERIF` | `true` | 开启形式验证相关逻辑，顶层会导出 `RVFI` 接口，MDU 也会切换到 formal 友好的结果生成方式。 |
-| `EXPOSE_CORE_BUS` | `true` | 顶层直接暴露 `ibus`/`dbus` 两个 `CoreBus` 接口；为 `false` 时改为导出 AXI4 `master` 接口，并接入 cache/xbar/桥接逻辑。 |
+| `EXPOSE_CORE_BUS` | `true` in `bus`, `false` in `cache` | 顶层直接暴露 `ibus`/`dbus` 两个 `CoreBus` 接口；cache 模式导出 AXI4 `master` 接口，并接入 ICache/DCache/xbar/桥接逻辑。 |
+
+地址空间配置在 `cl1/src/scala/AddressMap.scala` 和 `sim_verilator/platforms.py` 中显式维护。默认平台是 `simple_soc`；如需切换到 full SoC，使用 `CL1_PLATFORM=full_soc` 重新构建。`CL1_ADDRESS_PROFILE` 仍作为旧脚本兼容别名保留。
+
+### 测试模式切换
+
+`CL1_TEST_MODE=bus` 是直通 CoreBus 测试模式；`CL1_TEST_MODE=cache` 是 ICache/DCache + AXI 测试模式。
+
+```bash
+CL1_TEST_MODE=bus ./sim_verilator/build.sh
+CL1_TEST_MODE=cache ./sim_verilator/build.sh
+CL1_PLATFORM=full_soc ./sim_verilator/build.sh
+./sim_verilator/regression.py --test-mode cache --suite full
+./sim_verilator/run_riscv_dv.py --test-mode cache --compare /home/dgy1/prjs/riscv-dv/verification_output/rv32imc_mmode_directed_suite
+./sim_verilator/cl1_sim.py check --level full
+./sim_verilator/cl1_sim.py check --level harness
+./sim_verilator/cl1_sim.py check --level all
+```
+
+生成/构建产物按模式分离在 `vsrc/bus`、`vsrc/cache`、`sim_verilator/build/bus`、`sim_verilator/build/cache`。
 
 ### Cl1PowerSaveConfig
 
@@ -110,4 +129,4 @@ cl1_core/
 make verilog
 ```
 
-生成的 Verilog 文件位于 `vsrc/Cl1Top.sv`。
+生成的 Verilog 文件位于 `vsrc/<mode>/Cl1Top.sv`，其中 `<mode>` 为 `bus` 或 `cache`。

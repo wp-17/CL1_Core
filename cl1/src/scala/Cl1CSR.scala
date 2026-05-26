@@ -8,15 +8,59 @@ object CSRs {
   val misa    = 0x301.U(12.W)
   val mstatus = 0x300.U(12.W)
   val mtvec = 0x305.U(12.W)
+  val mstatush = 0x310.U(12.W)
   val mscratch = 0x340.U(12.W)
   val mepc = 0x341.U(12.W)
   val mcause = 0x342.U(12.W)
+  val mtval = 0x343.U(12.W)
   val dcsr   = 0x7b0.U(12.W)
   val dpc    = 0x7b1.U(12.W)
   val dscratch0 = 0x7b2.U(12.W)
   val dscratch1 = 0x7b3.U(12.W)
   val mip    = 0x344.U(12.W)
   val mie    = 0x304.U(12.W)
+  val mcycle = 0xb00.U(12.W)
+  val minstret = 0xb02.U(12.W)
+  val mcycleh = 0xb80.U(12.W)
+  val minstreth = 0xb82.U(12.W)
+  val mvendorid = 0xf11.U(12.W)
+  val marchid = 0xf12.U(12.W)
+  val mimpid = 0xf13.U(12.W)
+  val mhartid = 0xf14.U(12.W)
+  val mconfigptr = 0xf15.U(12.W)
+
+  val machineReadable = Seq(
+    misa,
+    mstatus,
+    mstatush,
+    mtvec,
+    mscratch,
+    mepc,
+    mcause,
+    mtval,
+    mip,
+    mie,
+    mcycle,
+    minstret,
+    mcycleh,
+    minstreth,
+    mvendorid,
+    marchid,
+    mimpid,
+    mhartid,
+    mconfigptr
+  )
+
+  val readOnly = Seq(
+    mvendorid,
+    marchid,
+    mimpid,
+    mhartid,
+    mconfigptr
+  )
+
+  def isMachineReadable(addr: UInt): Bool = VecInit(machineReadable.map(addr === _)).asUInt.orR
+  def isReadOnly(addr: UInt): Bool = VecInit(readOnly.map(addr === _)).asUInt.orR
 }
 
 
@@ -61,6 +105,8 @@ class Cl1CSR() extends Module {
   val cmt_status_en = io.excp_intf.cmt_status_en
   val cmt_cause_en  = io.excp_intf.cmt_cause_en
   val cmt_cause_n   = io.excp_intf.cmt_cause_n
+  val cmt_tval_en   = io.excp_intf.cmt_tval_en
+  val cmt_tval_n    = io.excp_intf.cmt_tval_n
   val cmt_mret_en   = io.excp_intf.cmt_mret_en
 
   val wen_dcsr       = Wire(Bool())
@@ -71,6 +117,11 @@ class Cl1CSR() extends Module {
   val wen_mepc       = Wire(Bool())
   val wen_mcause     = Wire(Bool())
   val wen_mie        = Wire(Bool())
+  val wen_mtval      = Wire(Bool())
+  val wen_mcycle     = Wire(Bool())
+  val wen_mcycleh    = Wire(Bool())
+  val wen_minstret   = Wire(Bool())
+  val wen_minstreth  = Wire(Bool())
 
   class mieBundle extends Bundle {
     val reserved  = UInt(16.W)
@@ -247,32 +298,52 @@ class Cl1CSR() extends Module {
   val dscratch1 = RegEnable(csr_wdat, 0.U(32.W), wen_dscratch1) // Debug Scratch 1
 
   // val mstatus   = RegInit("h1800".U(32.W))
-  // mtvec MODE WARL: only MODE={0,1} are legal; bit[1] is hardwired to 0.
-  val mtvec_wdata  = csr_wdat & ~"h2".U(32.W)
-  val mtvec        = RegEnable(mtvec_wdata, TVEC_ADDR.U(32.W), wen_mtvec)
+  val mtvec     = RegEnable(csr_wdat, TVEC_ADDR.U(32.W), wen_mtvec)
+  val mstatush  = WireInit(0.U(32.W))
 
-  // mepc is WARL: with the C extension IALIGN=16, so bit[0] is hardwired to 0.
-  val mepc_wdata   = Mux(cmt_epc_en, cmt_epc_n, csr_wdat) & ~"h1".U(32.W)
-  val mepc         = RegEnable(mepc_wdata, 0.U(32.W), wen_mepc)
+  val mepc_wdata = Mux(cmt_epc_en, cmt_epc_n, csr_wdat)
+  val mepc      = RegEnable(mepc_wdata, 0.U(32.W), wen_mepc)
   val mcause_wdata = Mux(cmt_cause_en, cmt_cause_n, csr_wdat)
-  val mcause       = RegEnable(mcause_wdata, 0.U(32.W), wen_mcause)
+  val mcause    = RegEnable(mcause_wdata, 0.U(32.W), wen_mcause)
+  val mtval_wdata = Mux(cmt_tval_en, cmt_tval_n, csr_wdat)
+  val mtval     = RegEnable(mtval_wdata, 0.U(32.W), wen_mtval)
 
   val misa      = WireInit("h40001104".U(32.W))
-  
+  val mcycle    = RegEnable(csr_wdat, 0.U(32.W), wen_mcycle)
+  val mcycleh   = RegEnable(csr_wdat, 0.U(32.W), wen_mcycleh)
+  val minstret  = RegEnable(csr_wdat, 0.U(32.W), wen_minstret)
+  val minstreth = RegEnable(csr_wdat, 0.U(32.W), wen_minstreth)
+  val mvendorid = WireInit(0.U(32.W))
+  val marchid   = WireInit(5.U(32.W))
+  val mimpid    = WireInit(0.U(32.W))
+  val mhartid   = WireInit(0.U(32.W))
+  val mconfigptr = WireInit(0.U(32.W))
+
 
   val allCSRs  = Seq(
     CSRs.misa      -> misa,
     CSRs.mstatus   -> mstatus,
+    CSRs.mstatush  -> mstatush,
     CSRs.mtvec     -> mtvec,
     CSRs.mscratch  -> mscratch,
     CSRs.mepc      -> mepc, 
     CSRs.mcause    -> mcause,
+    CSRs.mtval     -> mtval,
     CSRs.dcsr      -> dcsr,
     CSRs.dpc       -> dpc,  
     CSRs.dscratch0 -> dscratch0,
     CSRs.dscratch1 -> dscratch1,
     CSRs.mip       -> mip,
-    CSRs.mie       -> mie
+    CSRs.mie       -> mie,
+    CSRs.mcycle    -> mcycle,
+    CSRs.minstret  -> minstret,
+    CSRs.mcycleh   -> mcycleh,
+    CSRs.minstreth -> minstreth,
+    CSRs.mvendorid -> mvendorid,
+    CSRs.marchid   -> marchid,
+    CSRs.mimpid    -> mimpid,
+    CSRs.mhartid   -> mhartid,
+    CSRs.mconfigptr -> mconfigptr
   )
   val csr_rselOh  = VecInit(allCSRs.map { case (addr, reg)  => csr_raddr === addr})
   val csr_wselOh  = VecInit(allCSRs.map { case (addr, reg)  => csr_waddr === addr})
@@ -299,7 +370,12 @@ class Cl1CSR() extends Module {
   wen_mtvec      := getCSRWen(CSRs.mtvec)  
   wen_mepc       := getCSRWen(CSRs.mepc) || cmt_epc_en
   wen_mcause     := getCSRWen(CSRs.mcause) || cmt_cause_en
+  wen_mtval      := getCSRWen(CSRs.mtval) || cmt_tval_en
   wen_mie        := getCSRWen(CSRs.mie)
+  wen_mcycle     := getCSRWen(CSRs.mcycle)
+  wen_mcycleh    := getCSRWen(CSRs.mcycleh)
+  wen_minstret   := getCSRWen(CSRs.minstret)
+  wen_minstreth  := getCSRWen(CSRs.minstreth)
   csrw_mstatus   := getCSRWen(CSRs.mstatus)
   wen_mstatus    := csrw_mstatus || cmt_status_en || cmt_mret_en
   wen_mscratch   := getCSRWen(CSRs.mscratch)
@@ -325,12 +401,5 @@ class Cl1CSR() extends Module {
   dbg.step_r      := step
 
   dontTouch(mstatus)
-  dontTouch(mie)
-  dontTouch(mip)
-  dontTouch(mepc)
-  dontTouch(mcause)
-  dontTouch(mtvec)
-  dontTouch(mscratch)
-  dontTouch(misa)
 
 }

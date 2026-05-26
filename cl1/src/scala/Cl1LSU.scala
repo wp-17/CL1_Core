@@ -102,14 +102,12 @@ class Cl1LSU extends Module {
   ))
 
   val addr = bypReq.bits.addr
-  // Under formal verification, drive the bus address as a word-aligned
-  // address so that RVFI's rvfi_mem_addr matches the riscv-formal spec
   val bus_addr = if (FORMAL_VERIF) Cat(addr(31, 2), 0.U(2.W)) else addr
   val width = bypReq.bits.memType(2, 1)
   val wen  = bypReq.bits.memType(3)
 
   io.out.req.bits.addr := bus_addr
-  val d_cached = if(globalConfig.simpleSocTest) SimpleSocMemoryMap.isDCacheable(addr) else MemoryMap.isDCacheable(addr)
+  val d_cached = MemoryMap.isDCacheable(addr)
   io.out.req.bits.cache := d_cached
   // io.out.req.bits.cache := false.B
   // io.out.req.bits.invalid := false.B
@@ -155,7 +153,7 @@ class Cl1LSU extends Module {
     req_buf.memType := bypReq.bits.memType
     req_buf.mask    := mask
   }
-  io.in.resp.bits.err := 0.U //TODO: add err
+  io.in.resp.bits.err := io.out.rsp.bits.err
   val rdata = io.out.rsp.bits.data
   //TODO: optimize this !!!
   val one_byte_rdata = Mux1H(Seq(

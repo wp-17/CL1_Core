@@ -461,7 +461,11 @@ class Cl2Decoder extends Module {
 
   val decodeTable  = new DecodeTable(Cl2DecodeInfo.possiblePatterns, Cl2DecodeInfo.allFields)
   val decodeResult = decodeTable.decode(io.inst)
-  
+  val legalInst = VecInit(Cl2DecodeInfo.possiblePatterns.map { op =>
+    val pat = op.bitPat
+    (io.inst & pat.mask.U(pat.getWidth.W)) === pat.value.U(pat.getWidth.W)
+  }).asUInt.orR
+
   //TODO: use an elegant way to get decoder output
   io.out.immType := decodeResult(ImmSelField)
   io.out.aluOp   := decodeResult(AluOpField)
@@ -473,7 +477,7 @@ class Cl2Decoder extends Module {
   io.out.wbWen   := decodeResult(WenField)
   io.out.csrType := decodeResult(CSRField)
   io.out.muldivOp  := decodeResult(MDField)
-  io.out.illegal := decodeResult(IllegalField)
+  io.out.illegal := !legalInst
   io.out.fencei  := decodeResult(FenceiField)
 
 
