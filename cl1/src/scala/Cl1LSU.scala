@@ -35,7 +35,8 @@ class Cl1LSU extends Module {
       val req = Flipped(Decoupled(Flipped(new IDEX2LSUSignal())))
       val resp = Decoupled(new LSU2WBSignal())
     }
-    
+
+    val memNotOutStanding = Output(Bool())
     val out = new CoreBus()
 
     val flush = Input(Bool())
@@ -174,5 +175,11 @@ class Cl1LSU extends Module {
 
   val lsu_ck_en = ~(stateIdle & ~req.valid)
 
-
+  val lsu_req   = io.out.req.fire
+  val lsu_rsp   = io.out.rsp.fire
+  val memOstd_en = lsu_req | lsu_rsp
+  val memOstd_n  = lsu_req | ~lsu_rsp
+  val memOutStanding =  RegEnable(memOstd_n, false.B, memOstd_en)
+  val memNotOutStanding = ~memOutStanding | lsu_rsp
+  io.memNotOutStanding := memNotOutStanding
 }

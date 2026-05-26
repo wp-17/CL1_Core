@@ -73,6 +73,7 @@ class Cl1IDEXStage extends Module with TrapCode {
 
     val stall    = Input(Bool())
     val dxu_halt_ack = Output(Bool())
+    val memNotOutStanding = Input(Bool())
     val valid    = Output(Bool())
     val flush    = Input(Bool())
 
@@ -251,9 +252,15 @@ class Cl1IDEXStage extends Module with TrapCode {
   // fence.i
   val dx_fencei    = ctrl.fencei
   val fencei_exec_done  = Wire(Bool())
+  // Block younger memory and fence.i requests while an older LSU request is
+  // still outstanding. The older request may later return an exception from WB.
+  // Issuing another memory/cache-maintenance request before that result is known
+  // could create side effects that cannot be rolled back, breaking precise
+  // exceptions.
+  val memNotOutStanding = io.memNotOutStanding
 
   val flush_icache_done = Wire(Bool())
-  val icahce_flush_req  = dx_valid && !flush_icache_done && !dx_flush && dx_fencei && !dx_stall
+  val icahce_flush_req  = dx_valid && !flush_icache_done && !dx_flush && dx_fencei && !dx_stall && memNotOutStanding
   val flushi_done_set   = io.icache_req.fire
   val flushi_done_clr   = dx_valid && fencei_exec_done &&  wb_ready | dx_flush
   val flushi_done_n     = flushi_done_set | ~flushi_done_clr
@@ -261,7 +268,7 @@ class Cl1IDEXStage extends Module with TrapCode {
   flush_icache_done     :=  RegEnable(flushi_done_n,  false.B, flushi_done_en)
 
   val clean_dcache_done = Wire(Bool())
-  val dcache_clean_req  = dx_valid && !clean_dcache_done && !dx_flush && dx_fencei && !dx_stall
+  val dcache_clean_req  = dx_valid && !clean_dcache_done && !dx_flush && dx_fencei && !dx_stall && memNotOutStanding
   val cleand_done_set   = io.dcache_req.fire
   val cleand_done_clr   = dx_valid && fencei_exec_done && wb_ready | dx_flush
   val cleand_done_n     = cleand_done_set | ~cleand_done_clr
@@ -284,7 +291,7 @@ class Cl1IDEXStage extends Module with TrapCode {
   val mem_is_word = ctrl.memType(2, 1) === "b11".U
   val mem_misaligned = is_mem && ((mem_is_half && mem_addr(0) =/= 0.U) || (mem_is_word && mem_addr(1, 0) =/= 0.U))
 
-  io.mem.valid := dx_valid && !dx_exec_done && !dx_flush && (is_mem && !mem_misaligned) && !isIllegalInst && !dx_stall
+  io.mem.valid := dx_valid && !dx_exec_done && !dx_flush && (is_mem && !mem_misaligned) && !isIllegalInst && !dx_stall && memNotOutStanding
   io.mem.bits.addr := mem_addr
   io.mem.bits.memType := ctrl.memType
   io.mem.bits.wdata := io.rs2Value
