@@ -3,9 +3,8 @@ import chisel3._
 import chisel3.util._
 
 class IFU2BUSignal extends Bundle {
-    val req_seq  = Output(Bool())
-    val req_pc   = Output(UInt(32.W))
-    val pc_reg   = Output(UInt(32.W))
+    val req_pc       = Output(UInt(32.W))
+    val req_redirect = Output(Bool())
 }
 
 class BUS2IFUSignal extends Bundle {
@@ -32,9 +31,10 @@ class FetchAlign extends Module {
     val ifu_rsp_rdy   = io.toifu.ready
     val ifu_rsp_hsked = ifu_rsp_vld & ifu_rsp_rdy
 
-    val ifu_req_seq   = io.fromifu.bits.req_seq
+    val ifu_req_redirect = io.fromifu.bits.req_redirect
+    val ifu_req_seq   = ~ifu_req_redirect
     val ifu_req_pc    = io.fromifu.bits.req_pc
-    val pc_r          = io.fromifu.bits.pc_reg
+    val ifu_req_pc_r  = RegEnable(ifu_req_pc, 0.U(32.W), ifu_req_hsked)
 
     val bus_req_vld   = Wire(Bool())
     val bus_req_rdy   = memReq.ready
@@ -45,7 +45,7 @@ class FetchAlign extends Module {
     val bus_rsp_hsked = bus_rsp_vld & bus_rsp_rdy
     val bus_rsp_dat   = memResp.bits.data
 
-    val pc_unalign32    = pc_r(1) === true.B
+    val pc_unalign32    = ifu_req_pc_r(1) === true.B
     val pc_align32      = ~pc_unalign32
 
     val req_pc_unalign32 = ifu_req_pc(1)
@@ -109,7 +109,7 @@ class FetchAlign extends Module {
     val f2st_req_vld = st_fetch_1st & need_2st_fetch | st_fetch_2st_wait
     bus_req_vld      := ifu_req_vld | f2st_req_vld 
 
-    val pc_adder_op1 = Mux(f2st_req_vld, pc_r, ifu_req_pc)
+    val pc_adder_op1 = Mux(f2st_req_vld, ifu_req_pc_r, ifu_req_pc)
     val pc_adder_op2 = Mux(f1st_req_nxtline | f2st_req_vld, 2.U, 0.U)
     val pc_adder_res = pc_adder_op1 + pc_adder_op2
     val bus_fetch_addr = Cat(pc_adder_res(31,2),0.U(2.W))

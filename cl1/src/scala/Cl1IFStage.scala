@@ -187,8 +187,7 @@ class Cl1IFStage extends Module {
   aligner.ready   := ifu_rsp_ready
   io.toaligner.valid     := ifu_req_valid
   io.toaligner.bits.req_pc    := pc_n
-  io.toaligner.bits.req_seq   := ~(reset_req_r | bpu_redirect_req | flush_req_real)
-  io.toaligner.bits.pc_reg    := pc_r
+  io.toaligner.bits.req_redirect := reset_req_r | bpu_redirect_req | flush_req_real
 
   // wfi halt
   val ifu_no_out   = ~ifu_out_r | ifu_rsp_valid
