@@ -145,7 +145,7 @@ if(FORMAL_VERIF && WB_PIPESTAGE) { withReset(rst1) {
   val dx_pc       = BoringUtils.bore(core.idStage.pc)
   val f2_valid    = BoringUtils.bore(core.idStage.io.pplIn.valid)
   val f2_pc       = BoringUtils.bore(core.ifStage.pc_r)
-  val f1_pc       = BoringUtils.bore(core.ifStage.pc_n)
+  val f1_pc       = BoringUtils.bore(core.ifStage.fetch_pc)
 
   val dx_mem_req     = BoringUtils.bore(core.lsu.io.out.req.valid)
   val dx_mem_addr    = BoringUtils.bore(core.lsu.io.out.req.bits.addr)

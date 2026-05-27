@@ -72,14 +72,6 @@ class Cl1IFStage extends Module {
 
   val bpu_redirect_req = prdt_take
 
-  val flush_req_r     = Wire(Bool())
-  val flush_req_set   = flush_pluse & ~req_hsked
-  val flush_req_clr   = flush_req_r & req_hsked
-  val flush_req_en    = flush_req_set | flush_req_clr
-  val flush_req_n     = flush_req_set | ~flush_req_clr
-  flush_req_r         := RegEnable(flush_req_n, false.B, flush_req_en)
-  val flush_req_real  = flush_pluse | flush_req_r
-
   val ifu_out_r       = Wire(Bool())
   val ifu_out_set     = req_hsked
   val ifu_out_clr     = ifu_out_r & rsp_hsked
@@ -88,33 +80,55 @@ class Cl1IFStage extends Module {
   ifu_out_r           := RegEnable(ifu_out_n, false.B, ifu_out_en)
   val ifu_req_condi   = ~ifu_out_r | ifu_out_clr
 
+  val flush_real  = Wire(Bool())
+  val ifu_req_valid   = Wire(Bool())
   val ifu_new_req     = ~ifu_halt & ~reset_flag_r
-  val ifu_req         = ifu_new_req | reset_req_r | bpu_redirect_req | flush_req_real
+  val ifu_req_pending = RegNext(ifu_req_valid & ~ifu_req_ready, false.B)
+  val ifu_req         = ifu_new_req | ifu_req_pending | reset_req_r | bpu_redirect_req | flush_real
 
-  val ifu_req_valid   = ifu_req & ifu_req_condi
+  val flush_pending     = Wire(Bool())
+  val flush_pending_set   = flush_pluse & (ifu_req_pending | ifu_out_r & ~ifu_out_clr) & ~flush_pending
+  val flush_pending_clr   = flush_pending & ~ifu_req_pending & req_hsked
+  val flush_pending_en    = flush_pending_set | flush_pending_clr
+  val flush_pending_n     = flush_pending_set | ~flush_pending_clr
+  flush_pending         := RegEnable(flush_pending_n, false.B, flush_pending_en)
+  flush_real             := flush_pluse | flush_pending
+  val kill_old_rsp       = flush_pluse | flush_pending
+
+  ifu_req_valid       := ifu_req & ifu_req_condi
   val is_c            = Wire(Bool())
   val pc_incr_size    = Mux(is_c, 2.U, 4.U)
 
+  val fetch_pc        = Wire(UInt(32.W))
+  val stored_pc_en    = ifu_req_valid & ~ifu_req_ready
+  val stored_pc       = RegEnable(fetch_pc, 0.U(32.W), stored_pc_en)
+  val req_redirect_n = reset_req_r | bpu_redirect_req | flush_real
+  val stored_redirect = RegEnable(req_redirect_n, false.B, stored_pc_en)
+  val fetch_redirect  = Mux(ifu_req_pending, stored_redirect, req_redirect_n)
+
   val pc_r            = Wire(UInt(32.W))
-  val pc_adder_op1    = Mux(flush_pluse,    flush_pc,
-                        Mux(flush_req_r,    pc_r,
-                        Mux(bpu_redirect_req, prdt_pc,
-                        Mux(reset_req_r,    BOOT_ADDR.U,
+  val pc_adder_op1    =
+                        Mux(flush_pluse,       flush_pc,
+                        Mux(flush_pending,       pc_r,
+                        Mux(bpu_redirect_req,  prdt_pc,
+                        Mux(reset_req_r,       BOOT_ADDR.U,
                         pc_r))))
 
-  val pc_adder_op2    = Mux(flush_pluse,   flush_pc_ofst,
-                        Mux(flush_req_r    | reset_req_r, 0.U,
+  val pc_adder_op2    =
+                        Mux(flush_pluse,       flush_pc_ofst,
+                        Mux(flush_pending    | reset_req_r, 0.U,
                         Mux(bpu_redirect_req, prdt_pc_ofst,
                         pc_incr_size)))
 
   val pc_adder_rslt = pc_adder_op1 + pc_adder_op2
-
   val pc_n          = Cat(pc_adder_rslt(31,1),false.B)
+  fetch_pc          := Mux(ifu_req_pending, stored_pc, pc_n)
   val pc_en         = req_hsked | flush_pluse
   pc_r              := RegEnable(pc_n, 0.U(32.W), pc_en)
 
+
   val ir_o_rdy      = io.pplOut.ready
-  val ifu_valid     = ifu_rsp_valid & ifu_req_ready & ~flush_req_real
+  val inst_valid     = ifu_rsp_valid & ifu_req_ready & ~kill_old_rsp
 
   val fetch_inst    = aligner.bits.inst
   is_c              := fetch_inst(1,0) =/= "b11".U
@@ -175,9 +189,9 @@ class Cl1IFStage extends Module {
   io.pplOut.bits.ifu_fetch_err := fetch_err_n
   io.pplOut.bits.muldiv_b2b   := muldiv_b2b_n
 
-  io.pplOut.valid        := ifu_valid
+  io.pplOut.valid        := inst_valid
 
-  val ifu_rsp_ready      = Mux(flush_req_real, true.B, ir_o_rdy & ifu_req_ready)
+  val ifu_rsp_ready      = Mux(kill_old_rsp, true.B, ir_o_rdy & ifu_req_ready)
 
   io.toBpu.ir_vld        := ifu_rsp_valid
   io.toBpu.instPc        := pc_r 
@@ -186,8 +200,8 @@ class Cl1IFStage extends Module {
 
   aligner.ready   := ifu_rsp_ready
   io.toaligner.valid     := ifu_req_valid
-  io.toaligner.bits.req_pc    := pc_n
-  io.toaligner.bits.req_redirect := reset_req_r | bpu_redirect_req | flush_req_real
+  io.toaligner.bits.req_pc    := fetch_pc
+  io.toaligner.bits.req_redirect := fetch_redirect
 
   // wfi halt
   val ifu_no_out   = ~ifu_out_r | ifu_rsp_valid
