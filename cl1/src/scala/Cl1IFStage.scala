@@ -70,7 +70,7 @@ class Cl1IFStage extends Module {
   val reset_req_n     = reset_req_set | ~reset_req_clr
   val reset_req_r     = RegEnable(reset_req_n, false.B, reset_req_en)
 
-  val branch_req      = prdt_take
+  val bpu_redirect_req = prdt_take
 
   val flush_req_r     = Wire(Bool())
   val flush_req_set   = flush_pluse & ~req_hsked
@@ -89,7 +89,7 @@ class Cl1IFStage extends Module {
   val ifu_req_condi   = ~ifu_out_r | ifu_out_clr
 
   val ifu_new_req     = ~ifu_halt & ~reset_flag_r
-  val ifu_req         = ifu_new_req | reset_req_r | branch_req | flush_req_real
+  val ifu_req         = ifu_new_req | reset_req_r | bpu_redirect_req | flush_req_real
 
   val ifu_req_valid   = ifu_req & ifu_req_condi
   val is_c            = Wire(Bool())
@@ -98,13 +98,13 @@ class Cl1IFStage extends Module {
   val pc_r            = Wire(UInt(32.W))
   val pc_adder_op1    = Mux(flush_pluse,    flush_pc,
                         Mux(flush_req_r,    pc_r,
-                        Mux(branch_req,     prdt_pc,
+                        Mux(bpu_redirect_req, prdt_pc,
                         Mux(reset_req_r,    BOOT_ADDR.U,
                         pc_r))))
 
   val pc_adder_op2    = Mux(flush_pluse,   flush_pc_ofst,
                         Mux(flush_req_r    | reset_req_r, 0.U,
-                        Mux(branch_req,     prdt_pc_ofst,
+                        Mux(bpu_redirect_req, prdt_pc_ofst,
                         pc_incr_size)))
 
   val pc_adder_rslt = pc_adder_op1 + pc_adder_op2
@@ -187,7 +187,7 @@ class Cl1IFStage extends Module {
   aligner.ready   := ifu_rsp_ready
   io.toaligner.valid     := ifu_req_valid
   io.toaligner.bits.req_pc    := pc_n
-  io.toaligner.bits.req_seq   := ~(reset_req_r | branch_req | flush_req_real)
+  io.toaligner.bits.req_seq   := ~(reset_req_r | bpu_redirect_req | flush_req_real)
   io.toaligner.bits.pc_reg    := pc_r
 
   // wfi halt
