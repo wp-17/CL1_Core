@@ -143,7 +143,7 @@ if(FORMAL_VERIF && WB_PIPESTAGE) { withReset(rst1) {
 
   val dx_valid    = BoringUtils.bore(core.idStage.dx_valid)
   val dx_pc       = BoringUtils.bore(core.idStage.pc)
-  val f2_valid    = BoringUtils.bore(core.ifStage.ir_vld_r)
+  val f2_valid    = BoringUtils.bore(core.idStage.io.pplIn.valid)
   val f2_pc       = BoringUtils.bore(core.ifStage.pc_r)
   val f1_pc       = BoringUtils.bore(core.ifStage.pc_n)
 

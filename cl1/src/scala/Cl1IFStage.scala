@@ -113,38 +113,19 @@ class Cl1IFStage extends Module {
   val pc_en         = req_hsked | flush_pluse
   pc_r              := RegEnable(pc_n, 0.U(32.W), pc_en)
 
-  val ir_vld_r      = Wire(Bool())
   val ir_o_rdy      = io.pplOut.ready
-  val ir_o_hsked    = ir_vld_r & ir_o_rdy
-  val ir_vld_set    = rsp_hsked & ~flush_req_real
-  val ir_vld_clr    = ir_o_hsked
-  val ir_vld_en     = ir_vld_set | ir_vld_clr
-  val ir_vld_n      = ir_vld_set | ~ir_vld_clr
-  ir_vld_r          := RegEnable(ir_vld_n, false.B, ir_vld_en)
-
-  val ifu_pc_n      = pc_r
-  val ifu_pc_en     = ir_vld_set
-  val ifu_pc        = RegEnable(ifu_pc_n, 0.U, ifu_pc_en)
-  
-  val prdt_taken_en     = ir_vld_set
-  val prdt_taken        = RegEnable(prdt_take, 0.U, prdt_taken_en)
-
-  val isC_en        = ir_vld_set
-  val isC_r         = RegEnable(is_c, 0.U, isC_en)
+  val ifu_valid     = ifu_rsp_valid & ifu_req_ready & ~flush_req_real
 
   val fetch_inst    = aligner.bits.inst
   is_c              := fetch_inst(1,0) =/= "b11".U
   val c_inst        = fetch_inst(15,0)
-  val cinst_r       = RegEnable(c_inst, 0.U, is_c & ir_vld_set)
 
   val rvcexpander   = Module(new Cl1RVCExpander())
   rvcexpander.io.inst  := Mux(is_c, c_inst, 0.U)
   val expand_inst      = rvcexpander.io.out
-  val rvc_illegal_r    = RegEnable(is_c && rvcexpander.io.illegal, false.B, ir_vld_set)
+  val rvc_illegal   = is_c && rvcexpander.io.illegal
 
   val ir_n          = Mux(is_c, expand_inst, fetch_inst)
-  val ir_en         = ir_vld_set
-  val ir            = RegEnable(ir_n, 0.U(32.W), ir_en)
 
   // check b2b
   val dxudec_muldiv     = io.fromdxu.decmuldiv_info
@@ -169,38 +150,34 @@ class Cl1IFStage extends Module {
   val ir_rs1idx         = ir_n(19,15)
   val ir_rs2idx         = ir_n(24,20)
   val ir_rdidx          = ir_n(11,7)
-  val ir_rs1idx_r       = ir(19,15)
-  val ir_rs2idx_r       = ir(24,20)
-  val ir_rdidx_r        = ir(11,7)
+  val dx_rs1idx         = io.fromdxu.dec_rs1idx
+  val dx_rs2idx         = io.fromdxu.dec_rs2idx
+  val dx_rdidx          = io.fromdxu.dec_rdidx
 
   val muldiv_b2b_n      = ((dxudec_mulhsu & ifudec_mul) |
                           (dxudec_div    & ifudec_rem) |
                           (dxudec_divu   & ifudec_remu) |
                           (dxudec_rem    & ifudec_div) |
                           (dxudec_remu   & ifudec_divu)) &
-                          (ir_rs1idx_r === ir_rs1idx) & 
-                          (ir_rs2idx_r === ir_rs2idx) &
-                          (ir_rs1idx_r  =/= ir_rdidx_r) &
-                          (ir_rs2idx_r  =/= ir_rdidx_r)
-  
-  val muldiv_b2b_r      = RegEnable(muldiv_b2b_n, false.B, ir_vld_set)
+                          (dx_rs1idx === ir_rs1idx) &
+                          (dx_rs2idx === ir_rs2idx) &
+                          (dx_rs1idx =/= dx_rdidx) &
+                          (dx_rs2idx =/= dx_rdidx)
 
   val fetch_err_n   = aligner.bits.err =/= 0.U
-  val fetch_err_en  = ir_vld_set
-  val fetch_err_r   = RegEnable(fetch_err_n, false.B, fetch_err_en)
 
-  io.pplOut.bits.pc           := ifu_pc
-  io.pplOut.bits.inst         := ir
-  io.pplOut.bits.prdt_taken   := prdt_taken
-  io.pplOut.bits.cInst        := cinst_r
-  io.pplOut.bits.isCInst      := isC_r
-  io.pplOut.bits.rvcIllegal   := rvc_illegal_r
-  io.pplOut.bits.ifu_fetch_err := fetch_err_r
-  io.pplOut.bits.muldiv_b2b   := muldiv_b2b_r
+  io.pplOut.bits.pc           := pc_r
+  io.pplOut.bits.inst         := ir_n
+  io.pplOut.bits.prdt_taken   := prdt_take
+  io.pplOut.bits.cInst        := c_inst
+  io.pplOut.bits.isCInst      := is_c
+  io.pplOut.bits.rvcIllegal   := rvc_illegal
+  io.pplOut.bits.ifu_fetch_err := fetch_err_n
+  io.pplOut.bits.muldiv_b2b   := muldiv_b2b_n
 
-  io.pplOut.valid        := ir_vld_r
+  io.pplOut.valid        := ifu_valid
 
-  val ifu_rsp_ready      = Mux(flush_req_real, 1.U, (~ir_vld_r | ir_vld_clr) & ifu_req_ready)
+  val ifu_rsp_ready      = Mux(flush_req_real, true.B, ir_o_rdy & ifu_req_ready)
 
   io.toBpu.ir_vld        := ifu_rsp_valid
   io.toBpu.instPc        := pc_r 

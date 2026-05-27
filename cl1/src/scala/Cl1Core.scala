@@ -50,7 +50,7 @@ class Cl1Core extends Module {
 
   // ifStage.io.addrNotSeq := bpu.io.addrNotSeq //TODO: move this signal into IFU
   // ifStage.io.nextFetchAddr := pcGen.io.nextAddr
-  ifStage.io.pplOut <> idStage.io.pplIn
+  PipelineConnect(ifStage.io.pplOut, idStage.io.pplIn, pipe_flush)
   idStage.io.toifu  <> ifStage.io.fromdxu
   ifStage.io.toaligner <> aligner.io.fromifu
   aligner.io.toifu <> ifStage.io.fromaligner

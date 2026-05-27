@@ -49,6 +49,9 @@ class DX2IFUSignal extends Bundle {
   val flush_pc        = Output(UInt(32.W))
   val flush_pc_ofst   = Output(UInt(32.W))
   val decmuldiv_info  = Output(UInt(5.W))
+  val dec_rs1idx      = Output(UInt(5.W))
+  val dec_rs2idx      = Output(UInt(5.W))
+  val dec_rdidx       = Output(UInt(5.W))
 }
 
 
@@ -363,6 +366,9 @@ class Cl1IDEXStage extends Module with TrapCode {
   io.toifu.flush_pc       := flush_pc
   io.toifu.flush_pc_ofst  := flush_pc_ofst
   io.toifu.decmuldiv_info := ctrl.muldivOp
+  io.toifu.dec_rs1idx     := rs1
+  io.toifu.dec_rs2idx     := rs2
+  io.toifu.dec_rdidx      := rd
 
   val dx_may_x1wen = (rd === 1.U) & dx_valid
   io.wen_x1        := dx_may_x1wen
