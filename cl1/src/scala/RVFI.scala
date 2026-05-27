@@ -39,6 +39,7 @@ class RVFI extends Bundle {
   val rvfi_csr_mip      = new RVFICSR
   val rvfi_csr_mepc     = new RVFICSR
   val rvfi_csr_mcause   = new RVFICSR
+  val rvfi_csr_mtval    = new RVFICSR
   val rvfi_csr_mtvec    = new RVFICSR
   val rvfi_csr_mscratch = new RVFICSR
   val rvfi_csr_misa     = new RVFICSR

@@ -298,10 +298,13 @@ class Cl1CSR() extends Module {
   val dscratch1 = RegEnable(csr_wdat, 0.U(32.W), wen_dscratch1) // Debug Scratch 1
 
   // val mstatus   = RegInit("h1800".U(32.W))
-  val mtvec     = RegEnable(csr_wdat, TVEC_ADDR.U(32.W), wen_mtvec)
+  // mtvec MODE is WARL. CL1 supports direct (0) and vectored (1), so bit 1 is hardwired to 0.
+  val mtvec_wdata = csr_wdat & ~"h2".U(32.W)
+  val mtvec     = RegEnable(mtvec_wdata, TVEC_ADDR.U(32.W), wen_mtvec)
   val mstatush  = WireInit(0.U(32.W))
 
-  val mepc_wdata = Mux(cmt_epc_en, cmt_epc_n, csr_wdat)
+  // With C enabled, IALIGN=16 and mepc[0] is hardwired to 0.
+  val mepc_wdata = Mux(cmt_epc_en, cmt_epc_n, csr_wdat) & ~"h1".U(32.W)
   val mepc      = RegEnable(mepc_wdata, 0.U(32.W), wen_mepc)
   val mcause_wdata = Mux(cmt_cause_en, cmt_cause_n, csr_wdat)
   val mcause    = RegEnable(mcause_wdata, 0.U(32.W), wen_mcause)

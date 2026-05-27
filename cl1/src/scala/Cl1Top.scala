@@ -222,16 +222,19 @@ if(FORMAL_VERIF && WB_PIPESTAGE) { withReset(rst1) {
   val cur_mip      = BoringUtils.bore(core.csr.mip)
   val cur_mepc     = BoringUtils.bore(core.csr.mepc)
   val cur_mcause   = BoringUtils.bore(core.csr.mcause)
+  val cur_mtval    = BoringUtils.bore(core.csr.mtval)
   val cur_mtvec    = BoringUtils.bore(core.csr.mtvec)
   val cur_mscratch = BoringUtils.bore(core.csr.mscratch)
   val cur_misa     = BoringUtils.bore(core.csr.misa)
 
   val cmt_epc_en    = BoringUtils.bore(core.excp.cmt_epc_en)
   val cmt_cause_en  = BoringUtils.bore(core.excp.cmt_cause_en)
+  val cmt_tval_en   = BoringUtils.bore(core.excp.cmt_tval_en)
   val cmt_status_en = BoringUtils.bore(core.excp.cmt_status_en)
   val cmt_mret_en   = BoringUtils.bore(core.excp.cmt_mret_en)
   val cmt_epc_n     = BoringUtils.bore(core.excp.cmt_epc_n)
   val cmt_cause_n   = BoringUtils.bore(core.excp.cmt_cause_n)
+  val cmt_tval_n    = BoringUtils.bore(core.excp.cmt_tval_n)
 
   val cur_mstatus_mie  = cur_mstatus(3)
   val cur_mstatus_mpie = cur_mstatus(7)
@@ -271,6 +274,8 @@ if(FORMAL_VERIF && WB_PIPESTAGE) { withReset(rst1) {
            cmt_epc_en, Cat(cmt_epc_n(31, 1), 0.U(1.W)))
   driveCsr(rvfi_port.rvfi_csr_mcause,   CSRs.mcause,   cur_mcause,
            cmt_cause_en, cmt_cause_n)
+  driveCsr(rvfi_port.rvfi_csr_mtval,    CSRs.mtval,    cur_mtval,
+           cmt_tval_en, cmt_tval_n)
   driveCsr(rvfi_port.rvfi_csr_mtvec,    CSRs.mtvec,    cur_mtvec)
   driveCsr(rvfi_port.rvfi_csr_mscratch, CSRs.mscratch, cur_mscratch)
   

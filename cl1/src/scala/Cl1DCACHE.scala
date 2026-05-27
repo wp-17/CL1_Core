@@ -323,6 +323,7 @@ class Cl1DCACHE extends Module {
 
     val cleancache2bus = cache_clean
 
+    val req_mask_r      = RegEnable(io.in.req.bits.mask, 0.U, io.in.req.fire)
     val wdat_mask_r     = RegEnable(io.in.req.bits.mask, 0.U, io.in.req.fire & io.in.req.bits.wen)
     val wdat_r          = RegEnable(io.in.req.bits.data, 0.U, io.in.req.fire & io.in.req.bits.wen)
     val wbcache_mask_r       = RegEnable(wdat_mask_r, 0.U, wb_condi)
@@ -411,7 +412,7 @@ class Cl1DCACHE extends Module {
     ))
     io.out.req.bits.wen     := s_is_miss | s_is_wr_dirtyline
     io.out.req.bits.burst   := burst_trans | s_is_wr_dirtyline
-    io.out.req.bits.mask    := Mux(dcacheable  | s_is_wr_dirtyline, Fill(CacheParams.DW/8, true.B), wdat_mask_r)
+    io.out.req.bits.mask    := Mux(dcacheable  | s_is_wr_dirtyline, Fill(CacheParams.DW/8, true.B), req_mask_r)
     io.out.req.bits.len     := Mux(burst_trans | s_is_wr_dirtyline, (CacheParams.BANKS - 1).U, 0.U)
     io.out.req.bits.size    := Mux(burst_trans | s_is_wr_dirtyline, "b10".U, req_size_reg)
     io.out.req.bits.last    := Mux1H(Seq(
