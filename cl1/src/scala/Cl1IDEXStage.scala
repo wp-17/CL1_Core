@@ -202,6 +202,11 @@ class Cl1IDEXStage extends Module with TrapCode {
 
   val is_store = ctrl.memType(MEM_LS_BIT)
   val is_mem = ctrl.memType.orR
+  val mem_addr = alu.io.misc_req.res
+  val mem_is_half = ctrl.memType(2, 1) === "b10".U
+  val mem_is_word = ctrl.memType(2, 1) === "b11".U
+  val mem_misaligned = is_mem && ((mem_is_half && mem_addr(0) =/= 0.U) || (mem_is_word && mem_addr(1, 0) =/= 0.U))
+  val dxHasTrap = isIllegalInst || mem_misaligned
 
   val csrRden  = dx_valid & !isIllegalInst & (isCSRRW & rd.orR | ( isCSRRC | isCSRRS ))  & ~dx_stall & ~dx_flush
   val csrWren  = dx_valid & !isIllegalInst & csrWrites  & ~dx_stall & ~dx_flush
@@ -243,7 +248,7 @@ class Cl1IDEXStage extends Module with TrapCode {
   
   // mdu
   val mdu_in = mdu.io.in
-  mdu_in.valid := dx_valid && !dx_exec_done && !dx_flush && op_is_mdu && !dx_stall
+  mdu_in.valid := dx_valid && !dx_exec_done && !dx_flush && op_is_mdu && !dxHasTrap && !dx_stall
   mdu_in.bits.rs1 := io.rs1Value
   mdu_in.bits.rs2 := io.rs2Value
   mdu_in.bits.op  := ctrl.muldivOp(3,0)
@@ -263,7 +268,7 @@ class Cl1IDEXStage extends Module with TrapCode {
   val memNotOutStanding = io.memNotOutStanding
 
   val flush_icache_done = Wire(Bool())
-  val icahce_flush_req  = dx_valid && !flush_icache_done && !dx_flush && dx_fencei && !dx_stall && memNotOutStanding
+  val icahce_flush_req  = dx_valid && !flush_icache_done && !dx_flush && dx_fencei && !dxHasTrap && !dx_stall && memNotOutStanding
   val flushi_done_set   = io.icache_req.fire
   val flushi_done_clr   = dx_valid && fencei_exec_done &&  wb_ready | dx_flush
   val flushi_done_n     = flushi_done_set | ~flushi_done_clr
@@ -271,7 +276,7 @@ class Cl1IDEXStage extends Module with TrapCode {
   flush_icache_done     :=  RegEnable(flushi_done_n,  false.B, flushi_done_en)
 
   val clean_dcache_done = Wire(Bool())
-  val dcache_clean_req  = dx_valid && !clean_dcache_done && !dx_flush && dx_fencei && !dx_stall && memNotOutStanding
+  val dcache_clean_req  = dx_valid && !clean_dcache_done && !dx_flush && dx_fencei && !dxHasTrap && !dx_stall && memNotOutStanding
   val cleand_done_set   = io.dcache_req.fire
   val cleand_done_clr   = dx_valid && fencei_exec_done && wb_ready | dx_flush
   val cleand_done_n     = cleand_done_set | ~cleand_done_clr
@@ -289,18 +294,13 @@ class Cl1IDEXStage extends Module with TrapCode {
   io.dcache_req.bits.invalid := false.B
   io.dcache_req.bits.clean   := dx_fencei
 
-  val mem_addr = alu.io.misc_req.res
-  val mem_is_half = ctrl.memType(2, 1) === "b10".U
-  val mem_is_word = ctrl.memType(2, 1) === "b11".U
-  val mem_misaligned = is_mem && ((mem_is_half && mem_addr(0) =/= 0.U) || (mem_is_word && mem_addr(1, 0) =/= 0.U))
-
-  io.mem.valid := dx_valid && !dx_exec_done && !dx_flush && (is_mem && !mem_misaligned) && !isIllegalInst && !dx_stall && memNotOutStanding
+  io.mem.valid := dx_valid && !dx_exec_done && !dx_flush && is_mem && !dxHasTrap && !dx_stall && memNotOutStanding
   io.mem.bits.addr := mem_addr
   io.mem.bits.memType := ctrl.memType
   io.mem.bits.wdata := io.rs2Value
 
-  val fencei_exec    = dx_fencei
-  val multicycl_exec = (is_mem && !mem_misaligned) | op_is_mdu
+  val fencei_exec    = dx_fencei && !dxHasTrap
+  val multicycl_exec = ((is_mem | op_is_mdu) && !dxHasTrap)
   val singlcycl_exec = ~multicycl_exec & ~fencei_exec
 
   val ready_go = Mux1H(Seq(
@@ -347,7 +347,7 @@ class Cl1IDEXStage extends Module with TrapCode {
   val uncondi_jump    = branch_jal | branch_jalr
   val condi_branch    = branch_beq | branch_bne | branch_bge | branch_bgeu | branch_blt | branch_bltu
   val is_branch       = uncondi_jump | condi_branch
-  val branch_mis_prdt = (branch_prdt_taken ^ branch_real_taken) & is_branch | dx_fencei
+  val branch_mis_prdt = (branch_prdt_taken ^ branch_real_taken) & is_branch | fencei_exec
   val flush_pc        = Mux(branch_jalr & branch_real_taken, io.rs1Value, pc)
   val bjp_pc_ofst   = Mux1H(Seq(
     branch_jal   ->  Jimm,
@@ -361,7 +361,7 @@ class Cl1IDEXStage extends Module with TrapCode {
   dontTouch(branch_real_taken)
   dontTouch(branch_mis_prdt)
 
-  brchmis_flush_pluse     := branch_mis_prdt & dx_valid & !dx_exec_done & !dx_flush & !dx_stall
+  brchmis_flush_pluse     := branch_mis_prdt & dx_valid & !dx_exec_done & !dx_flush & !dxHasTrap & !dx_stall
   io.toifu.flush_req      := brchmis_flush_pluse
   io.toifu.flush_pc       := flush_pc
   io.toifu.flush_pc_ofst  := flush_pc_ofst
@@ -392,11 +392,11 @@ class Cl1IDEXStage extends Module with TrapCode {
   pplInfo.pc := io.pplIn.bits.pc
   pplInfo.inst   := inst
   pplInfo.wbType := ctrl.wbType
-  pplInfo.wen := rd_wen && !mem_misaligned
+  pplInfo.wen := rd_wen && !dxHasTrap
   pplInfo.memType := ctrl.memType
   pplInfo.isCInst := io.pplIn.bits.isCInst
   pplInfo.cInst := io.pplIn.bits.cInst
-  pplInfo.isTrap := isIllegalInst || mem_misaligned
+  pplInfo.isTrap := dxHasTrap
   pplInfo.trapCode := MuxCase(0.U(8.W), Seq(
     isIllegalInst  -> INST_ILLEGAL_EXPT(7,0),
     mem_misaligned -> Mux(is_store, STORE_MISALIGNED_EXPT(7,0), LOAD_MISALIGNED_EXPT(7,0))
