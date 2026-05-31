@@ -60,7 +60,7 @@ class Cl1Core extends Module {
   ifStage.io.flush_pc_ofst := Mux(dm.io.dbg_flush, 0.U, excp.io.flush_ofst)
   ifStage.io.ifu_halt := excp.io.ifu_halt
   ifStage.io.ifu_stall := excp.io.ifu_stall
-  excp.io.if_pc := ifStage.io.if_pc
+  excp.io.next_pc := ifStage.io.next_pc
   excp.io.ifu_halt_ack    := ifStage.io.ifu_halt_ack
 
   ifStage.io.toBpu <> bpu.io.fromIfu

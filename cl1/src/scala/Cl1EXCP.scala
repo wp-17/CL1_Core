@@ -69,7 +69,7 @@ class Cl1EXCPIO() extends Bundle {
     val flush               = Output(Bool())
     val flush_pc            = Output(UInt(32.W))
     val flush_ofst          = Output(UInt(32.W))
-    val if_pc               = Input(UInt(32.W))
+    val next_pc             = Input(UInt(32.W))
     val dx_valid            = Input(Bool())
     val ifu_stall           = Output(Bool())
     val dxu_stall           = Output(Bool())
@@ -99,7 +99,7 @@ class Cl1EXCP() extends Module with TrapCode {
     val mepc    = io.excp2Csr.mepc
     val mcause  = io.excp2Csr.mcause
     val mtvec   = io.excp2Csr.mtvec
-    val if_pc   = io.if_pc
+    val next_pc   = io.next_pc
     val dx_valid = io.dx_valid
 
     val cmt_ecall       = io.wb2Excp.cmt_ecall
@@ -139,7 +139,7 @@ class Cl1EXCP() extends Module with TrapCode {
     val irq_csr_save_en      = Wire(Bool())
     val trap_csr_save_en     = irq_csr_save_en | excp_csr_save_en
     val cmt_epc_en       = trap_csr_save_en
-    val cmt_epc_n        = Mux(excp_csr_save_en, wb_pc, if_pc)
+    val cmt_epc_n        = Mux(excp_csr_save_en, wb_pc, next_pc)
     val cmt_status_en    = trap_csr_save_en
     val cmt_cause_en     = trap_csr_save_en
     val cmt_cause_n      = Mux(excp_csr_save_en, excp_cause, irq_casue)

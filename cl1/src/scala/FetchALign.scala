@@ -9,6 +9,7 @@ class IFU2BUSignal extends Bundle {
 
 class BUS2IFUSignal extends Bundle {
    val inst      = Output(UInt(32.W)) 
+   val rsp_pc    = Output(UInt(32.W))
    val err       = Output(Bool())
 }
 
@@ -133,6 +134,7 @@ class FetchAlign extends Module {
 
     io.fromifu.ready    := ifu_req_rdy
     io.toifu.valid      := ifu_rsp_vld
+    io.toifu.bits.rsp_pc := ifu_req_pc_r
     io.toifu.bits.inst  := rsp_inst
     io.toifu.bits.err   := 0.U
 

@@ -37,10 +37,11 @@ class Cl1IFStage extends Module {
     val ifu_halt      = Input(Bool())
     val ifu_stall     = Input(Bool())
     val ifu_halt_ack  = Output(Bool())
-    val if_pc         = Output(UInt(32.W))
+    val next_pc       = Output(UInt(32.W))
   })
 
   val aligner         = BypReg(io.fromaligner)
+  val rsp_pc          = aligner.bits.rsp_pc
 
   val excp_flush      = io.flush
   val excp_flush_pc   = io.flush_pc
@@ -48,6 +49,7 @@ class Cl1IFStage extends Module {
 
   val flush_pluse     = io.fromdxu.flush_req || excp_flush
   val ifu_halt        = io.ifu_halt
+  val ifu_stall       = io.ifu_stall
   val flush_pc        = Mux(excp_flush, excp_flush_pc, io.fromdxu.flush_pc)
   val flush_pc_ofst   = Mux(excp_flush, excp_flush_pc_ofst, io.fromdxu.flush_pc_ofst)
 
@@ -84,13 +86,14 @@ class Cl1IFStage extends Module {
 
   val flush_real  = Wire(Bool())
   val ifu_req_valid   = Wire(Bool())
-  val ifu_new_req     = ~ifu_halt & ~reset_flag_r
+  val ifu_new_req     = ~ifu_halt & ~ifu_stall & ~reset_flag_r
   val ifu_req_pending = RegNext(ifu_req_valid & ~ifu_req_ready, false.B)
   val ifu_req         = ifu_new_req | ifu_req_pending | reset_req_r | bpu_redirect_req | flush_real
 
+  val redirect_rsp_hsked = Wire(Bool())
   val flush_pending     = Wire(Bool())
   val flush_pending_set   = flush_pluse & (ifu_req_pending | ifu_out_r & ~ifu_out_clr) & ~flush_pending
-  val flush_pending_clr   = flush_pending & ~ifu_req_pending & req_hsked
+  val flush_pending_clr   = redirect_rsp_hsked
   val flush_pending_en    = flush_pending_set | flush_pending_clr
   val flush_pending_n     = flush_pending_set | ~flush_pending_clr
   flush_pending         := RegEnable(flush_pending_n, false.B, flush_pending_en)
@@ -128,9 +131,13 @@ class Cl1IFStage extends Module {
   val pc_en         = req_hsked | flush_pluse
   pc_r              := RegEnable(pc_n, 0.U(32.W), pc_en)
 
+  val flush_pending_pc = pc_r
+  redirect_rsp_hsked := (rsp_pc === flush_pending_pc) & flush_pending & rsp_hsked
+
 
   val ir_o_rdy      = io.pplOut.ready
-  val inst_valid     = ifu_rsp_valid & ifu_req_ready & ~kill_old_rsp
+  val ifu_rsp_ready = Mux(kill_old_rsp, true.B, ir_o_rdy & ifu_req_ready & !ifu_stall)
+  val inst_valid     = ifu_rsp_valid & ifu_rsp_ready & ifu_req_ready & ~kill_old_rsp
 
   val fetch_inst    = aligner.bits.inst
   is_c              := fetch_inst(1,0) =/= "b11".U
@@ -182,7 +189,7 @@ class Cl1IFStage extends Module {
 
   val fetch_err_n   = aligner.bits.err =/= 0.U
 
-  io.pplOut.bits.pc           := pc_r
+  io.pplOut.bits.pc           := rsp_pc
   io.pplOut.bits.inst         := ir_n
   io.pplOut.bits.prdt_taken   := prdt_take
   io.pplOut.bits.cInst        := c_inst
@@ -193,10 +200,8 @@ class Cl1IFStage extends Module {
 
   io.pplOut.valid        := inst_valid
 
-  val ifu_rsp_ready      = Mux(kill_old_rsp, true.B, ir_o_rdy & ifu_req_ready)
-
   io.toBpu.ir_vld        := ifu_rsp_valid
-  io.toBpu.instPc        := pc_r 
+  io.toBpu.instPc        := rsp_pc
   // io.toBpu.inst          := ir_n
   io.toBpu.inst          := fetch_inst
 
@@ -205,8 +210,8 @@ class Cl1IFStage extends Module {
   io.toaligner.bits.req_pc    := fetch_pc
   io.toaligner.bits.req_redirect := fetch_redirect
 
-  val if_pc       = Mux(ifu_out_r, pc_r, fetch_pc)
-  io.if_pc        := if_pc
+  val next_pc       = Mux(ifu_out_r, pc_r, fetch_pc)
+  io.next_pc        := next_pc
 
   // wfi halt
   val ifu_no_out   = ~ifu_out_r | ifu_rsp_valid
