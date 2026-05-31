@@ -59,6 +59,8 @@ class Cl1Core extends Module {
   ifStage.io.flush_pc := Mux(dm.io.dbg_flush, dm.io.dbg_flush_pc, excp.io.flush_pc)
   ifStage.io.flush_pc_ofst := Mux(dm.io.dbg_flush, 0.U, excp.io.flush_ofst)
   ifStage.io.ifu_halt := excp.io.ifu_halt
+  ifStage.io.ifu_stall := excp.io.ifu_stall
+  excp.io.if_pc := ifStage.io.if_pc
   excp.io.ifu_halt_ack    := ifStage.io.ifu_halt_ack
 
   ifStage.io.toBpu <> bpu.io.fromIfu
@@ -82,7 +84,7 @@ class Cl1Core extends Module {
 
   val dx_rs1dat  = if(WB_PIPESTAGE)  Mux(rs1Hazard, bypass, gpr.io.readDataA) else gpr.io.readDataA
   val dx_rs2dat  = if(WB_PIPESTAGE)  Mux(rs2Hazard, bypass, gpr.io.readDataB) else gpr.io.readDataB
-  val dx_stall   = if(WB_PIPESTAGE)  csrHazard || (rs1Hazard || rs2Hazard) & wbStage.io.is_mem_load || excp.io.dxu_halt else false.B
+  val dx_stall   = if(WB_PIPESTAGE)  csrHazard || (rs1Hazard || rs2Hazard) & wbStage.io.is_mem_load || excp.io.dxu_halt || excp.io.dxu_stall else false.B
 
   idStage.io.pplOut <> wbStage.io.pplIn
   idStage.io.rs1Value := dx_rs1dat
@@ -92,6 +94,7 @@ class Cl1Core extends Module {
   idStage.io.stall    := dx_stall
   idStage.io.flush    := pipe_flush
   idStage.io.memNotOutStanding := lsu.io.memNotOutStanding
+  excp.io.dx_valid := idStage.io.valid
   excp.io.dxu_halt_ack := idStage.io.dxu_halt_ack
 
   csr.io.rdAddr := readCSR
@@ -112,7 +115,7 @@ class Cl1Core extends Module {
 
   wbStage.io.dbg <> dm.io.wb2dbg
 
-  lsu.io.flush :=  pipe_flush && wbStage.io.valid
+  lsu.io.flush :=  false.B
   lsu.io.in.req  <> idStage.io.mem
   lsu.io.in.resp <> wbStage.io.mem
 
@@ -122,7 +125,7 @@ class Cl1Core extends Module {
     wbStage.io.pplIn <> idStage.io.pplOut
   }
 
-  wbStage.io.flush := pipe_flush
+  wbStage.io.flush := false.B
   wbStage.io.toExcp <> excp.io.wb2Excp
 
   excp.io.dbg2excp  <> dm.io.dbg2excp

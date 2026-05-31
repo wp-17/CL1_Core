@@ -28,7 +28,6 @@ class wb2Excp extends Bundle {
     val cmt_wfi       = Input(Bool())
     val wb_valid      = Input(Bool())
     val wb_pc         = Input(UInt(32.W))
-    val memNoOutStanding = Input(Bool())
     val excp_valid    = Input(Bool())
     val excp_code     = Input(UInt(8.W))
     val excp_tval     = Input(UInt(32.W))
@@ -43,6 +42,7 @@ class excp2Csr extends Bundle {
     val mtie        = Input(Bool())
     val mie         = Input(Bool())
     val mepc        = Input(UInt(32.W))
+    val mcause      = Input(UInt(32.W))
     val mtvec       = Input(UInt(32.W))
     val cmt_epc_en      = Output(Bool())
     val cmt_epc_n       = Output(UInt(32.W))
@@ -69,6 +69,10 @@ class Cl1EXCPIO() extends Bundle {
     val flush               = Output(Bool())
     val flush_pc            = Output(UInt(32.W))
     val flush_ofst          = Output(UInt(32.W))
+    val if_pc               = Input(UInt(32.W))
+    val dx_valid            = Input(Bool())
+    val ifu_stall           = Output(Bool())
+    val dxu_stall           = Output(Bool())
     val ifu_halt            = Output(Bool())
     val ifu_halt_ack        = Input(Bool())
     val dxu_halt            = Output(Bool())
@@ -93,7 +97,10 @@ class Cl1EXCP() extends Module with TrapCode {
     val mtie    = io.excp2Csr.mtie
     val mie     = io.excp2Csr.mie
     val mepc    = io.excp2Csr.mepc
+    val mcause  = io.excp2Csr.mcause
     val mtvec   = io.excp2Csr.mtvec
+    val if_pc   = io.if_pc
+    val dx_valid = io.dx_valid
 
     val cmt_ecall       = io.wb2Excp.cmt_ecall
     val cmt_mret        = io.wb2Excp.cmt_mret
@@ -101,7 +108,6 @@ class Cl1EXCP() extends Module with TrapCode {
     val ebrk_excp_en    = io.dbg2excp.ebrk_excp_en
     val wb_valid        = io.wb2Excp.wb_valid
     val wb_pc           = io.wb2Excp.wb_pc
-    val no_outstanding_mem_access = io.wb2Excp.memNoOutStanding
     val excp_valid      = io.wb2Excp.excp_valid
     val excp_code_raw   = io.wb2Excp.excp_code
     val excp_tval_raw   = io.wb2Excp.excp_tval
@@ -122,33 +128,87 @@ class Cl1EXCP() extends Module with TrapCode {
                         (tmr_irq & mtie) -> M_TIMER_IRQ
     ))
 
-    val excp_take_en    = cmt_ecall | ebrk_excp_en | excp_valid
+    val excp_req    = cmt_ecall | ebrk_excp_en | excp_valid
+    val excp_csr_save_en = excp_req
     val excp_cause       = MuxCase(0.U, Seq(
                             excp_valid   -> Cat(0.U(24.W), excp_code_raw),
                             ebrk_excp_en -> BREAKPOINT_EXPT,
                             cmt_ecall    -> M_ECALL_EXPT
                         ))
     val trap_exit_en     = cmt_mret
-    val irq_take_en      = irq_req & no_outstanding_mem_access & wb_valid
-    val trap_take_en     = irq_take_en | excp_take_en
-    val cmt_epc_en       = trap_take_en 
-    val cmt_epc_n        = wb_pc
-    val cmt_status_en    = trap_take_en
-    val cmt_cause_en     = trap_take_en
-    val cmt_cause_n      = Mux(excp_take_en, excp_cause, irq_casue)
-    val cmt_tval_en      = trap_take_en
+    val irq_csr_save_en      = Wire(Bool())
+    val trap_csr_save_en     = irq_csr_save_en | excp_csr_save_en
+    val cmt_epc_en       = trap_csr_save_en
+    val cmt_epc_n        = Mux(excp_csr_save_en, wb_pc, if_pc)
+    val cmt_status_en    = trap_csr_save_en
+    val cmt_cause_en     = trap_csr_save_en
+    val cmt_cause_n      = Mux(excp_csr_save_en, excp_cause, irq_casue)
+    val cmt_tval_en      = trap_csr_save_en
     val cmt_tval_n       = Mux(excp_valid, excp_tval_raw, 0.U)
     val cmt_mret_en      = cmt_mret
+
+    val dxwb_pipeEmpty = !dx_valid && !wb_valid
+
+    val sIdle :: sIrqDrain :: sIrqFlush :: sExcpFlush :: Nil = Enum(4)
+    val state_en         = WireInit(false.B)
+    val state_n          = WireInit(sIdle)
+    val state            = RegEnable(state_n, sIdle, state_en)
+
+    // Trap FSM policy:
+    // - Exceptions are handled with priority over interrupts.
+    // - An interrupt is conceptually inserted between IF and ID/EX: IF is
+    //   stalled first, then the FSM waits for ID/EX and WB to drain before
+    //   saving CSR state and flushing to the trap vector.
+    // - If an exception appears while an interrupt is draining the younger
+    //   pipeline state, the exception path takes priority.
+    // - Exception flush discards IF and ID/EX. Interrupt flush only needs to
+    //   discard IF because ID/EX is empty after drain; using the common flush
+    //   path is therefore harmless for interrupts.
+    switch(state) {
+        is(sIdle) {
+            state_en := excp_req | irq_req
+            state_n  := MuxCase(state, Seq(
+                excp_req -> sExcpFlush,
+                irq_req  -> sIrqDrain
+            ))
+        }
+        is(sExcpFlush) {
+            state_en := true.B
+            state_n  := sIdle
+        }
+        is(sIrqDrain) {
+            state_en := excp_req | dxwb_pipeEmpty
+            state_n  := MuxCase(state, Seq(
+                excp_req -> sExcpFlush,
+                (irq_req & dxwb_pipeEmpty) -> sIrqFlush,
+                (!irq_req & dxwb_pipeEmpty) -> sIdle
+            ))
+        }
+        is(sIrqFlush) {
+            state_en := true.B
+            state_n  := sIdle
+        }
+    }
+
+    def isState(s: UInt): Bool = state === s
+
+    val stIsIdle      = isState(sIdle)
+    val stIsIrqDrain  = isState(sIrqDrain)
+    val stIsIrqFlush  = isState(sIrqFlush)
+    val stIsExcpFlush = isState(sExcpFlush)
+    irq_csr_save_en := stIsIrqFlush
+    val dxu_stall      = excp_req
+    val ifu_stall      = stIsIrqDrain
 
     val direct_mode       = (mtvec(1,0) === 0.U)
     val vector_mode       = (mtvec(1,0) === 1.U)
     val mtvec_base        = Cat(mtvec(31,2),0.U(2.W))
 
     val debug_excp_base         = Cl1Config.DBG_EXCP_BASE.U
-    val trap_take_flush         = trap_take_en
+    val trap_take_flush         = stIsIrqFlush | stIsExcpFlush
     val trap_take_flush_pc      = Mux(debug_mode, debug_excp_base, mtvec_base)
-    val is_interrupt            = cmt_cause_n(31)
-    val trap_take_flush_ofst    = Mux(vector_mode & is_interrupt & trap_take_en, cmt_cause_n(3,0) << 2, 0.U)
+    val is_interrupt            = stIsIrqFlush
+    val trap_take_flush_ofst    = Mux(vector_mode & is_interrupt, mcause(3,0) << 2, 0.U)
 
     val trap_exit_flush         = trap_exit_en
     val trap_exit_flush_pc      = mepc
@@ -197,6 +257,8 @@ class Cl1EXCP() extends Module with TrapCode {
 
     val dx_halt            = if(WB_PIPESTAGE) wfi_dxu_halt else false.B
 
+    io.ifu_stall           := ifu_stall
+    io.dxu_stall           := dxu_stall
     io.ifu_halt            := wfi_ifu_halt
     io.dxu_halt            := dx_halt
     io.core_wfi            := core_wfi_o

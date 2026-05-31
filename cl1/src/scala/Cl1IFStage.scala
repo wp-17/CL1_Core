@@ -35,7 +35,9 @@ class Cl1IFStage extends Module {
     val flush_pc      = Input(UInt(32.W))
     val flush_pc_ofst = Input(UInt(32.W))
     val ifu_halt      = Input(Bool())
+    val ifu_stall     = Input(Bool())
     val ifu_halt_ack  = Output(Bool())
+    val if_pc         = Output(UInt(32.W))
   })
 
   val aligner         = BypReg(io.fromaligner)
@@ -202,6 +204,9 @@ class Cl1IFStage extends Module {
   io.toaligner.valid     := ifu_req_valid
   io.toaligner.bits.req_pc    := fetch_pc
   io.toaligner.bits.req_redirect := fetch_redirect
+
+  val if_pc       = Mux(ifu_out_r, pc_r, fetch_pc)
+  io.if_pc        := if_pc
 
   // wfi halt
   val ifu_no_out   = ~ifu_out_r | ifu_rsp_valid

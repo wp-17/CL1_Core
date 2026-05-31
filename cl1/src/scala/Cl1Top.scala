@@ -112,7 +112,7 @@ if(FORMAL_VERIF && WB_PIPESTAGE) { withReset(rst1) {
   val wb_ecall  = BoringUtils.bore(core.wbStage.isValidEcall)
   val wb_cmt    = BoringUtils.bore(core.wbStage.wb_commit)
   val wb_diff_cmt = BoringUtils.bore(core.wbStage.diff_commit)
-  val trap      = BoringUtils.bore(core.excp.excp_take_en)
+  val trap      = BoringUtils.bore(core.excp.excp_req)
   val wb_excp_fault = BoringUtils.bore(core.wbStage.io.toExcp.excp_valid)
 
   // Retire through RVFI when the instruction either commits normally, or
@@ -173,7 +173,7 @@ if(FORMAL_VERIF && WB_PIPESTAGE) { withReset(rst1) {
   rvfi_port.rvfi_trap      := wb_excp_fault
   rvfi_port.rvfi_halt      := false.B
 
-  val intr_taken = BoringUtils.bore(core.excp.irq_take_en)
+  val intr_taken = BoringUtils.bore(core.excp.irq_csr_save_en)
   val excp_flush_pc   = BoringUtils.bore(core.excp.flush_pc)
   val excp_flush_ofst = BoringUtils.bore(core.excp.flush_ofst)
   val mret_taken      = BoringUtils.bore(core.excp.cmt_mret_en)

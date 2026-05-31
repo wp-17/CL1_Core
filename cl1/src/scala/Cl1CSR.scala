@@ -390,6 +390,7 @@ class Cl1CSR() extends Module {
 
   io.excp_intf.mtvec := mtvec
   io.excp_intf.mepc  := mepc
+  io.excp_intf.mcause := mcause
   io.excp_intf.mie   := mstatus_mie
   io.excp_intf.meie  := meie
   io.excp_intf.msie  := msie
